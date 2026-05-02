@@ -1,5 +1,12 @@
 .venv/
 __pycache__/
 *.py[cod]
-*.egg-info/
+*.pyo
+*.pyd
+.Python
+env/
+venv/
 .DS_Store
+*.egg-info/
+cgt_reality_engine.egg-info/
+.env

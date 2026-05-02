@@ -1,40 +1,59 @@
-# CGT + FX Reality Engine (Ireland)
+# Portfolio Live PnL Dashboard
 
-A minimal Flask web app to convert USD broker trades into EUR outcomes, account for FX movement, IBKR fees, and Irish CGT.
+A single-file Python web app that fetches live stock prices and computes real-time PnL, broker fees, FX conversion costs, and CGT liability across IBKR, Morgan Stanley (RSU), and Equate Plus (ESPP) positions. Supports CGT calculations for Ireland and South Africa.
 
-## Files
+## Features
 
-- `app.py` — Flask application entry point
-- `parser.py` — CSV parsing and ticker-level aggregation
-- `fx.py` — FX conversion and P/L decomposition
-- `tax.py` — Irish CGT allocation and action guidance
-- `templates/index.html` — single-page UI
+- Live prices via Yahoo Finance (no API key needed)
+- Per-stock breakdown: PnL, commission, SEC fee, FINRA TAF
+- Country-specific CGT: Ireland (33% rate, €1,270 exemption) or South Africa (18% rate, $2,500 exemption)
+- EUR/USD live FX rate + IBKR FX conversion fee
+- One-click refresh — no server restart needed
 
-## Usage
+## Setup
 
-1. Install dependencies from `pyproject.toml`:
-   ```bash
-   python -m pip install -e .
-   ```
-2. Run the app:
-   ```bash
-   python app.py
-   ```
-3. Open `http://127.0.0.1:5000`
+```bash
+git clone <your-repo-url>
+cd <repo>
 
-## What it does
+# Install dependencies
+pip install -r requirements.txt
 
-- Upload a USD-based broker CSV
-- Enter current EUR/USD FX rate (required)
-- Optionally enter FX rate at purchase (defaults to `1.00`)
-- CSV can include an optional `current_price_usd` / `Current Price` column so the app can compute today’s market price and value clearly
-- The app also pulls live ticker pricing from Yahoo Finance at runtime where available
-- Outputs per-ticker EUR cost, value, market/FX P&L, fees, tax, and net cash
-- Provides a simple Sell/Hold action recommendation
+# Copy and edit assumptions
+cp .env.example .env
 
-## Notes
+# Run
+python main.py
+```
 
-- No database required
-- No auth
-- No live FX API integration
-- Only USD/EUR tracked
+Then open [http://localhost:5000](http://localhost:5000).
+
+## Configuration
+
+Edit `.env` to override default assumptions:
+
+| Variable | Default | Description |
+|---|---|---|
+| `COUNTRY` | `Ireland` | CGT country: "Ireland" or "South Africa" |
+| `CGT_RATE` | `0.33` | Irish CGT rate (ignored if COUNTRY=South Africa) |
+| `CGT_EXEMPTION_EUR` | `1270` | Irish CGT exemption (EUR) (ignored if COUNTRY=South Africa) |
+| `SA_CGT_RATE` | `0.18` | South African CGT rate (ignored if COUNTRY=Ireland) |
+| `SA_EXEMPTION_USD` | `2500` | South African CGT exemption (USD) (ignored if COUNTRY=Ireland) |
+| `EUR_USD_FALLBACK` | `1.13` | Fallback rate if FX fetch fails |
+| `IBKR_COMM_RATE` | `0.005` | IBKR commission per share |
+| `IBKR_COMM_MIN` | `1.00` | IBKR minimum commission |
+| `IBKR_COMM_MAX_PC` | `0.01` | IBKR max commission (% of trade) |
+| `MS_FLAT_FEE` | `9.99` | Morgan Stanley flat fee per trade |
+| `EP_COMM_PC` | `0.001` | Equate Plus commission rate |
+| `IBKR_FX_RATE` | `0.00002` | IBKR FX conversion rate |
+| `SEC_FEE_RATE` | `0.000008` | SEC transaction fee per $ proceeds |
+| `PORT` | `5000` | Web server port |
+
+## Assumptions
+
+- **RSU cost basis** = FMV at vest date (income tax already paid at vest; PnL shown is CGT-eligible gain only)
+- **ESPP cost basis** = purchase price (income tax on discount assumed paid; gain above that is CGT)
+- **IBKR FX fee** applies to IBKR positions only; Morgan Stanley and Equate Plus proceeds assumed converted separately
+- CGT calculated on net pooled gain (losses offset gains)
+
+> Not financial or tax advice. Consult a professional for your exact liability.

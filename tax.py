@@ -1,31 +1,41 @@
-TAX_RATE = 0.33
+"""Irish CGT calculation logic."""
+
+from config import CGT_EXEMPTION_EUR, CGT_RATE, COUNTRY, SA_CGT_RATE, SA_EXEMPTION_USD
 
 
-def allocate_taxes(positions, fx_at_purchase, fx_current):
-    net_pnls = [pos["total_pnl_eur"] for pos in positions]
-    total_positive = sum(p for p in net_pnls if p > 0)
-    total_net = sum(net_pnls)
-    total_tax = TAX_RATE * max(total_net, 0.0)
+def get_cgt_params(country: str) -> tuple[float, float]:
+    if country == "Ireland":
+        return CGT_RATE, CGT_EXEMPTION_EUR
+    elif country == "SouthAfrica":
+        return SA_CGT_RATE, SA_EXEMPTION_USD
+    else:
+        raise ValueError(f"Unsupported country: {country}")
 
-    for pos in positions:
-        if total_positive > 0 and pos["total_pnl_eur"] > 0:
-            pos["tax_eur"] = total_tax * (pos["total_pnl_eur"] / total_positive)
+
+class CGTCalculator:
+    def __init__(self, rate: float, exemption: float, country: str) -> None:
+        self.rate = rate
+        self.exemption = exemption
+        self.country = country
+
+    def compute(self, net_pnl_usd: float, eur_usd: float) -> dict[str, float]:
+        if self.country == "Ireland":
+            net_pnl_base = net_pnl_usd / eur_usd
+            taxable_base = max(0.0, net_pnl_base - self.exemption)
+            cgt_base = taxable_base * self.rate
+            cgt_usd = cgt_base * eur_usd
+        elif self.country == "SouthAfrica":
+            taxable_usd = max(0.0, net_pnl_usd - self.exemption)
+            cgt_usd = taxable_usd * self.rate
+            cgt_base = cgt_usd / eur_usd
+            net_pnl_base = net_pnl_usd / eur_usd
+            taxable_base = taxable_usd / eur_usd
         else:
-            pos["tax_eur"] = 0.0
+            raise ValueError(f"Unsupported country: {self.country}")
 
-        pos["net_cash_eur"] = pos["adjusted_value_eur"] - pos["tax_eur"]
-        pos["action"] = determine_action(pos, total_positive, fx_at_purchase, fx_current)
-
-    return positions
-
-
-def determine_action(position, total_positive_gain, fx_at_purchase, fx_current):
-    fx_tailwind = fx_current > fx_at_purchase
-    strong_proceeds = position["net_cash_eur"] > max(50.0, 0.02 * position["adjusted_value_eur"])
-    loss_harvest = position["total_pnl_eur"] < 0 and total_positive_gain > 0
-
-    if loss_harvest:
-        return "Sell"
-    if strong_proceeds and fx_tailwind and position["total_pnl_eur"] >= 0:
-        return "Sell"
-    return "Hold"
+        return {
+            "net_pnl_eur": round(net_pnl_base, 2),
+            "taxable_eur": round(taxable_base, 2),
+            "cgt_eur": round(cgt_base, 2),
+            "cgt_usd": round(cgt_usd, 2),
+        }
