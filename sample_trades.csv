@@ -1,0 +1,4 @@
+date,name,ticker,broker,asset_type,currency,price_usd,quantity,cost_usd,value_usd,pnl_usd
+2026-04-23,Alphabet,GOOGL,IBKR,Stock,USD,340.9098,32.2666,11000.00,12444.90,1444.90
+2026-04-27,Alphabet,GOOGL,IBKR,Stock,USD,346.0152,37.5706,13000.00,14490.60,1490.60
+2026-04-30,Alphabet,GOOGL,IBKR,Stock,USD,368.4927,260.0000,95808.10,100279.40,4471.30
