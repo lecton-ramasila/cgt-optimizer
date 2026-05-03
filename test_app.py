@@ -2,7 +2,7 @@
 
 import pytest
 import json
-from config import PORTFOLIO, CGT_RATE, CGT_EXEMPTION_EUR, SA_CGT_RATE, SA_EXEMPTION_USD
+from config import PORTFOLIO, CGT_RATE, CGT_EXEMPTION_EUR, SA_CGT_RATE, SA_EXEMPTION_ZAR
 from portfolio import Portfolio, Lot, Position
 from tax import CGTCalculator, get_cgt_params
 from fees import FeeCalculator
@@ -30,7 +30,7 @@ class TestCurrencySupport:
         """Test that South Africa uses ZAR-based calculation."""
         rate, exemption = get_cgt_params("SouthAfrica")
         assert rate == SA_CGT_RATE
-        assert exemption == SA_EXEMPTION_USD
+        assert exemption == SA_EXEMPTION_ZAR
 
     def test_cgt_calculator_ireland_returns_eur(self):
         """Test that Ireland CGT computation returns EUR as local currency."""
@@ -43,7 +43,7 @@ class TestCurrencySupport:
 
     def test_cgt_calculator_south_africa_returns_zar(self):
         """Test that South Africa CGT computation returns ZAR as local currency."""
-        calc = CGTCalculator(SA_CGT_RATE, SA_EXEMPTION_USD, "SouthAfrica")
+        calc = CGTCalculator(SA_CGT_RATE, SA_EXEMPTION_ZAR, "SouthAfrica")
         result = calc.compute(10000, 1.13, 0.054)
         assert result["local_currency"] == "ZAR"
         assert "net_pnl_local" in result
@@ -66,14 +66,14 @@ class TestCurrencySupport:
 
     def test_south_africa_cgt_calculation(self):
         """Test South Africa CGT calculation with ZAR conversion."""
-        calc = CGTCalculator(0.18, 2500.0, "SouthAfrica")
+        calc = CGTCalculator(0.18, 50000.0, "SouthAfrica")
         net_pnl_usd = 10000
         zar_usd = 0.054
         result = calc.compute(net_pnl_usd, 1.13, zar_usd)
 
         net_pnl_zar = net_pnl_usd / zar_usd
-        expected_taxable = max(0, net_pnl_zar - 2500.0)
-        expected_cgt = expected_taxable * 0.18
+        expected_taxable = max(0, net_pnl_zar - 50000.0)
+        expected_cgt = (expected_taxable * 0.40) * 0.18
 
         assert abs(result["net_pnl_local"] - net_pnl_zar) < 0.01
         assert abs(result["taxable_local"] - expected_taxable) < 0.01
@@ -231,7 +231,7 @@ class TestPortfolioAggregation:
         assert "local_currency" in totals
         assert "cgt_usd" in totals
         assert "net_cash_usd" in totals
-        assert "net_cash_eur" in totals
+        assert "net_cash_local" in totals
 
     def test_portfolio_stock_detail_structure(self):
         """Test that each stock has required fields."""
@@ -245,6 +245,7 @@ class TestPortfolioAggregation:
             assert "name" in stock
             assert "platform" in stock
             assert "type" in stock
+            assert "currency" in stock
             assert "units" in stock
             assert "cost_usd" in stock
             assert "price" in stock
@@ -346,7 +347,7 @@ class TestAPIEndpoints:
 
         # These should not be null/missing
         assert "net_cash_usd" in totals
-        assert "net_cash_eur" in totals
+        assert "net_cash_local" in totals
         # At least one should have a value (assuming prices are available)
         assert totals["net_cash_usd"] is not None or totals["value_usd"] == 0
 
@@ -368,8 +369,8 @@ class TestCGTExemptions:
 
     def test_south_africa_exemption_usd(self):
         """Test South Africa exemption is in USD."""
-        calc = CGTCalculator(SA_CGT_RATE, SA_EXEMPTION_USD, "SouthAfrica")
-        assert calc.exemption == SA_EXEMPTION_USD
+        calc = CGTCalculator(SA_CGT_RATE, SA_EXEMPTION_ZAR, "SouthAfrica")
+        assert calc.exemption == SA_EXEMPTION_ZAR
 
     def test_exemption_applied_in_ireland(self):
         """Test that exemption reduces taxable gain in Ireland."""
@@ -452,6 +453,43 @@ class TestEdgeCases:
         result = calc.compute(net_pnl_usd, 1.13, zar_usd)
         # Should be roughly 1000 / 0.054 ZAR
         assert abs(result["net_pnl_local"] - (1000 / zar_usd)) < 1.0  # Allow 1 ZAR error
+
+
+class TestRegressionBugs:
+    """Regression tests for previously reported currency/FX bugs."""
+
+    def test_south_africa_exemption_string_is_usd(self, client):
+        response = client.get("/api/data?countries=SouthAfrica")
+        data = json.loads(response.data)
+        sa_summary = next(summary for summary in data["country_summaries"] if summary["country_key"] == "SouthAfrica")
+        assert sa_summary["cgt_exemption"].startswith("R")
+
+    def test_position_currency_defaults_to_usd(self):
+        portfolio = Portfolio.from_definition(PORTFOLIO, country="Ireland")
+        assert all(position.currency == "USD" for position in portfolio.positions)
+
+
+class TestPriceFetcher:
+    def test_fetch_uses_zarusd_ticker(self, monkeypatch):
+        from pricing import PriceFetcher
+        import pandas as pd
+
+        calls = []
+
+        def fake_download(tickers, period, auto_adjust, progress):
+            calls.append(tickers)
+            if tickers == "ZARUSD=X":
+                return pd.DataFrame({"Close": [0.054]})
+            cols = pd.MultiIndex.from_product([["Close"], ["GOOGL", "EURUSD=X"]])
+            return pd.DataFrame([[100.0, 1.13]], columns=cols)
+
+        monkeypatch.setattr("pricing.yf.download", fake_download)
+        prices, eur_usd, zar_usd = PriceFetcher(["GOOGL"]).fetch()
+
+        assert "ZARUSD=X" in calls
+        assert prices["GOOGL"] == 100.0
+        assert eur_usd == 1.13
+        assert zar_usd == 0.054
 
 
 if __name__ == "__main__":

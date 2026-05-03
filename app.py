@@ -146,8 +146,10 @@ def create_app() -> Flask:
   <div class="kpi"><div class="kpi-label">Cost Basis</div><div class="kpi-val" id="k-cost">—</div></div>
   <div class="kpi"><div class="kpi-label">Gross PnL</div><div class="kpi-val" id="k-pnl">—</div></div>
   <div class="kpi"><div class="kpi-label">Total Broker Fees</div><div class="kpi-val" id="k-fees">—</div></div>
-  <div class="kpi"><div class="kpi-label">CGT Liability</div><div class="kpi-val neg" id="k-cgt">—</div></div>
-  <div class="kpi"><div class="kpi-label">Net Cash (EUR)</div><div class="kpi-val gold" id="k-net">—</div></div>
+  <div class="kpi"><div class="kpi-label">CGT Liability (USD)</div><div class="kpi-val neg" id="k-cgt-usd">—</div></div>
+  <div class="kpi"><div class="kpi-label">CGT Liability (Local)</div><div class="kpi-val neg" id="k-cgt-local">—</div></div>
+  <div class="kpi"><div class="kpi-label">Net Cash (USD)</div><div class="kpi-val gold" id="k-net-usd">—</div></div>
+  <div class="kpi"><div class="kpi-label">Net Cash (Local)</div><div class="kpi-val gold" id="k-net">—</div></div>
 </div>
 
 <main>
@@ -191,12 +193,21 @@ def create_app() -> Flask:
 
     <div class="card">
       <div class="card-title">Bottom Line</div>
-      <div class="line"><span class="line-label">Gross proceeds</span><span class="line-val" id="b-gross">—</span></div>
-      <div class="line"><span class="line-label">Less: all broker fees</span><span class="line-val neg" id="b-fees">—</span></div>
-      <div class="line"><span class="line-label">Less: CGT</span><span class="line-val neg" id="b-cgt">—</span></div>
+      <div class="line total"><span class="line-label">Capital deployed (USD)</span><span class="line-val" id="b-invest-stock">—</span></div>
+      <div class="line"><span class="line-label">Capital deployed (Local)</span><span class="line-val" id="b-invest-local">—</span></div>
       <div class="line-sep"></div>
+      <div class="line"><span class="line-label">Gross proceeds</span><span class="line-val" id="b-gross">—</span></div>
+      <div class="line"><span class="line-label">Broker fees</span><span class="line-val neg" id="b-fees">—</span></div>
+      <div class="line"><span class="line-label">CGT (USD / Local)</span><span class="line-val neg" id="b-cgt">—</span></div>
       <div class="line total"><span class="line-label">Net cash (USD)</span><span class="line-val gold" id="b-net-usd">—</span></div>
-      <div class="line total"><span class="line-label">Net cash (EUR)</span><span class="line-val gold" id="b-net-eur">—</span></div>
+      <div class="line total"><span class="line-label">Net cash (Local)</span><span class="line-val gold" id="b-net-eur">—</span></div>
+      <div class="line-sep"></div>
+      <div class="line total"><span class="line-label">Profit / Loss (USD)</span><span class="line-val" id="b-pnl-usd-story">—</span></div>
+      <div class="line total"><span class="line-label">Profit / Loss (Local)</span><span class="line-val" id="b-pnl-local-story">—</span></div>
+      <div class="line"><span class="line-label">Price movement contribution</span><span class="line-val" id="b-attr-price">—</span></div>
+      <div class="line"><span class="line-label">Costs contribution (fees+tax)</span><span class="line-val" id="b-attr-cost">—</span></div>
+      <div class="line"><span class="line-label">FX contribution</span><span class="line-val" id="b-attr-fx">Requires entry FX history</span></div>
+      <div class="line total"><span class="line-label">Decision</span><span class="line-val" id="b-sale-signal">—</span></div>
     </div>
 
   </div>
@@ -224,6 +235,13 @@ const cls = v => v == null ? '' : v >= 0 ? 'pos' : 'neg';
 const availableCountries = @@COUNTRY_OPTIONS@@;
 const allTickers = @@STOCK_OPTIONS@@;
 const defaultCountries = @@DEFAULT_COUNTRIES@@;
+const baseCurrency = 'EUR';
+
+function currencyFormatter(currency) {
+  if (currency === 'EUR') return eur;
+  if (currency === 'ZAR') return zar;
+  return usd;
+}
 
 function badge(platform, type) {
   const pm = platform === 'IBKR' ? 'badge-ibkr' : platform === 'Morgan Stanley' ? 'badge-ms' : 'badge-ep';
@@ -287,7 +305,7 @@ function renderCountrySummaries(summaries) {
     return;
   }
   container.innerHTML = summaries.map(summary => {
-    const localSign = summary.local_currency === 'EUR' ? eur : usd;
+    const localSign = summary.local_currency === 'EUR' ? eur : summary.local_currency === 'ZAR' ? zar : usd;
     return `
       <div class="card">
         <div class="card-title">${summary.country} CGT Summary</div>
@@ -296,19 +314,35 @@ function renderCountrySummaries(summaries) {
         <div class="line"><span class="line-label">Annual exemption</span><span class="line-val">− ${summary.cgt_exemption}</span></div>
         <div class="line"><span class="line-label">Taxable gain (${summary.local_currency})</span><span class="line-val">${localSign(summary.taxable_local, 2)}</span></div>
         <div class="line-sep"></div>
-        <div class="line total"><span class="line-label">CGT @ ${summary.cgt_rate_pct}% (${summary.local_currency})</span><span class="line-val neg">${localSign(summary.cgt_local, 2)}</span></div>
+        ${summary.inclusion_local != null ? `<div class="line"><span class="line-label">Inclusion (${Math.round(summary.inclusion_rate*100)}%)</span><span class="line-val">${localSign(summary.inclusion_local, 2)}</span></div><div class="line total"><span class="line-label">CGT (${summary.local_currency})</span><span class="line-val neg">${localSign(summary.cgt_local, 2)}</span></div><div class="line"><span class="line-label">Applied marginal rate</span><span class="line-val">${Math.round(summary.marginal_rate*100)}%</span></div>` : `<div class="line total"><span class="line-label">CGT (${summary.local_currency})</span><span class="line-val neg">${localSign(summary.cgt_local, 2)}</span></div>`}
         <div class="line total"><span class="line-label">CGT (USD equivalent)</span><span class="line-val neg">${usd(summary.cgt_usd, 2)}</span></div>
+        <div class="line total"><span class="line-label">Decision</span><span class="line-val">${summary.sale_signal}</span></div>
       </div>
     `;
   }).join('');
 }
 
+function renderNoCountrySelected() {
+  $('as-of').textContent = 'No country selected';
+  $('fx-rate').textContent = '—';
+  ['k-val','k-cost','k-pnl','k-fees','k-cgt-usd','k-cgt-local','k-net-usd','k-net','b-gross','b-fees','b-cgt','b-net-usd','b-net-eur','b-invest-stock','b-invest-local','b-pnl-usd-story','b-pnl-local-story','b-attr-price','b-attr-cost','b-attr-fx','b-sale-signal'].forEach(id => { if($(id)) $(id).textContent='No country selected'; });
+  $('tbody').innerHTML='';
+  $('tfoot').innerHTML='';
+  $('country-summaries').innerHTML='';
+}
+
 async function load() {
+  const selectedCountries = getSelectedCountries();
+  if (!selectedCountries.length) {
+    renderNoCountrySelected();
+    return;
+  }
+
   const btn = $('refresh-btn');
   btn.disabled = true;
   btn.textContent = 'Fetching…';
   try {
-    const countries = getSelectedCountries();
+    const countries = selectedCountries;
     const stocks = getSelectedTickers();
     const url = `/api/data?countries=${encodeURIComponent(countries.join(','))}&stocks=${encodeURIComponent(stocks.join(','))}`;
     const res = await fetch(url);
@@ -330,12 +364,19 @@ function render(d) {
   $('fx-rate').textContent = d.eur_usd.toFixed(4);
 
   const t = d.totals;
+  const useBaseCurrency = d.selected_countries && d.selected_countries.length > 1;
+  const displayCurrency = useBaseCurrency ? baseCurrency : t.local_currency;
+  const displayFmt = currencyFormatter(displayCurrency);
+  const displayNetCash = useBaseCurrency ? (t.net_cash_usd / d.eur_usd) : t.net_cash_local;
+  const investedLocal = useBaseCurrency ? (t.cost_usd / d.eur_usd) : (t.local_currency === 'EUR' ? t.cost_usd / d.eur_usd : t.cost_usd / (d.zar_usd || 0.054));
   $('k-val').textContent  = usd(t.value_usd);
   $('k-cost').textContent = usd(t.cost_usd);
   $('k-pnl').innerHTML    = `<span class="${cls(t.pnl_usd)}">${signed(t.pnl_usd, usd)}</span>`;
   $('k-fees').textContent = usd(t.total_fees + t.fx_fee, 2);
-  $('k-cgt').textContent  = usd(t.cgt_usd, 2);
-  $('k-net').textContent  = eur(t.net_cash_eur, 2);
+  $('k-cgt-usd').textContent  = usd(t.cgt_usd, 2);
+  $('k-cgt-local').textContent = displayFmt(t.cgt_local, 2);
+  $('k-net-usd').textContent = usd(t.net_cash_usd, 2);
+  $('k-net').textContent  = displayFmt(displayNetCash, 2);
 
   const tbody = $('tbody');
   tbody.innerHTML = '';
@@ -388,9 +429,27 @@ function render(d) {
   // Cards — bottom line
   $('b-gross').textContent  = usd(t.value_usd);
   $('b-fees').textContent   = '− ' + usd(t.total_fees + t.fx_fee, 2);
-  $('b-cgt').textContent    = '− ' + usd(t.cgt_usd);
-  $('b-net-usd').textContent = usd(t.net_cash_usd);
-  $('b-net-eur').textContent = eur(t.net_cash_eur, 2);
+  $('b-cgt').textContent    = `− ${usd(t.cgt_usd, 2)} / ${displayFmt(t.cgt_local, 2)}`;
+  $('b-net-usd').textContent = usd(t.net_cash_usd, 2);
+  $('b-net-eur').textContent = displayFmt(displayNetCash, 2);
+
+  const upfrontFees = t.upfront_fees_usd || 0;
+  const adminFees = t.total_fees + t.fx_fee;
+  const profitUsd = t.net_cash_usd - (t.cost_usd + upfrontFees);
+  const profitLocal = displayNetCash - investedLocal;
+  const priceContribution = t.pnl_usd;
+  const costContribution = -(adminFees + t.cgt_usd);
+  const signal = (d.selected_countries && d.selected_countries.length > 1)
+    ? 'See country cards for per-country decision'
+    : (profitUsd > 0 ? `ELIGIBLE FOR SALE in ${d.selected_countries?.[0] || 'selected country'}` : (profitUsd === 0 ? 'STABLE' : 'HOLD'));
+  $('b-invest-stock').textContent = usd(t.cost_usd, 2);
+  $('b-invest-local').textContent = displayFmt(investedLocal, 2);
+  $('b-pnl-usd-story').textContent = signed(profitUsd, v => usd(v, 2));
+  $('b-pnl-local-story').textContent = signed(profitLocal, v => displayFmt(v, 2));
+  $('b-attr-price').textContent = signed(priceContribution, v => usd(v, 2));
+  $('b-attr-cost').textContent = signed(costContribution, v => usd(v, 2));
+  $('b-attr-fx').textContent = 'Requires entry FX history';
+  $('b-sale-signal').textContent = signal;
 
   renderCountrySummaries(d.country_summaries);
 }
@@ -432,6 +491,7 @@ load();
         portfolio = Portfolio.from_definition({ticker: PORTFOLIO[ticker] for ticker in requested_tickers}, country=primary_country)
         portfolio.update_prices(prices)
         data = portfolio.as_dict(eur_usd, zar_usd)
+        data['zar_usd'] = round(zar_usd, 4)
         data['selected_countries'] = [COUNTRY_LABELS.get(country, country) for country in requested_countries]
         data['selected_tickers'] = requested_tickers
         data['country_summaries'] = []
@@ -440,6 +500,8 @@ load();
             country_portfolio = Portfolio.from_definition({ticker: PORTFOLIO[ticker] for ticker in requested_tickers}, country=country)
             country_portfolio.update_prices(prices)
             totals = country_portfolio.as_dict(eur_usd, zar_usd)['totals']
+            profit_usd = totals['net_cash_usd'] - totals['cost_usd']
+            sale_signal = f"ELIGIBLE FOR SALE in {COUNTRY_LABELS.get(country, country)}" if profit_usd > 0 else ("STABLE" if profit_usd == 0 else f"HOLD in {COUNTRY_LABELS.get(country, country)}")
             data['country_summaries'].append({
                 'country': COUNTRY_LABELS.get(country, country),
                 'country_key': country,
@@ -450,6 +512,10 @@ load();
                 'taxable_local': totals['taxable_local'],
                 'cgt_local': totals['cgt_local'],
                 'cgt_usd': totals['cgt_usd'],
+                'sale_signal': sale_signal,
+                'inclusion_local': totals.get('inclusion_local'),
+                'inclusion_rate': totals.get('inclusion_rate'),
+                'marginal_rate': totals.get('marginal_rate'),
             })
 
         return jsonify(data)

@@ -15,7 +15,7 @@ class PriceFetcher:
         self.fx_ticker = fx_ticker
         self.fallback_eur_usd = fallback_eur_usd
         self.fallback_zar_usd = fallback_zar_usd
-        self.zar_usd_ticker = "ZARJPY=X"  # Use ZARJPY as proxy; will divide EUR rate by this
+        self.zar_usd_ticker = "ZARUSD=X"
 
     def fetch(self) -> tuple[dict[str, float | None], float, float]:
         download_tickers = self.tickers + [self.fx_ticker]
@@ -36,10 +36,10 @@ class PriceFetcher:
             eur_usd = self.fallback_eur_usd
 
         try:
-            zar_data = yf.download("ZARJPY=X", period="1d", auto_adjust=True, progress=False)
-            zar_jpy = float(zar_data["Close"].iloc[-1]) if not zar_data["Close"].empty else None
-            if zar_jpy:
-                zar_usd = 100 / zar_jpy
+            zar_data = yf.download(self.zar_usd_ticker, period="1d", auto_adjust=True, progress=False)
+            close_series = zar_data["Close"].dropna()
+            if not close_series.empty:
+                zar_usd = float(close_series.iloc[-1])
             else:
                 zar_usd = self.fallback_zar_usd
         except Exception:
