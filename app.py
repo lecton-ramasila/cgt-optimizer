@@ -1,22 +1,37 @@
 """Flask application entrypoint for the portfolio dashboard."""
 
-from flask import Flask, jsonify, render_template_string
+import json
+
+from flask import Flask, jsonify, request
 
 from config import PORTFOLIO, COUNTRY
 from portfolio import Portfolio
 from pricing import PriceFetcher
 
+SUPPORTED_COUNTRIES = ["Ireland", "SouthAfrica"]
+COUNTRY_LABELS = {"Ireland": "Ireland", "SouthAfrica": "South Africa"}
+
 
 def create_app() -> Flask:
     app = Flask(__name__)
-    portfolio = Portfolio.from_definition(PORTFOLIO)
-    price_fetcher = PriceFetcher([position.ticker for position in portfolio.positions])
+    base_portfolio = Portfolio.from_definition(PORTFOLIO)
+    price_fetcher = PriceFetcher([position.ticker for position in base_portfolio.positions])
+    valid_tickers = [position.ticker for position in base_portfolio.positions]
+    default_countries = [COUNTRY] if COUNTRY in SUPPORTED_COUNTRIES else ["Ireland"]
+    default_display = COUNTRY_LABELS.get(COUNTRY, COUNTRY)
+    default_cgt_rate_pct = int(Portfolio.from_definition(PORTFOLIO, country=COUNTRY).cgt_calculator.rate * 100)
+    default_cgt_exemption = (
+        f"€{Portfolio.from_definition(PORTFOLIO, country=COUNTRY).cgt_calculator.exemption:,.0f}"
+        if COUNTRY == "Ireland"
+        else f"R{Portfolio.from_definition(PORTFOLIO, country=COUNTRY).cgt_calculator.exemption:,.0f}"
+    )
+    country_options_json = json.dumps(
+        [{"value": country, "label": COUNTRY_LABELS[country]} for country in SUPPORTED_COUNTRIES]
+    )
+    stock_options_json = json.dumps(valid_tickers)
+    default_countries_json = json.dumps(default_countries)
 
-    cgt_rate_pct = int(portfolio.cgt_calculator.rate * 100)
-    cgt_exemption = f"€{portfolio.cgt_calculator.exemption:,.0f}" if COUNTRY == "Ireland" else f"${portfolio.cgt_calculator.exemption:,.0f}"
-    country_display = "South Africa" if COUNTRY == "SouthAfrica" else COUNTRY
-
-    html = f"""
+    html_template = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -26,7 +41,7 @@ def create_app() -> Flask:
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
-  :root {{
+  :root {
     --bg:       #080c14;
     --surface:  #0d1321;
     --card:     #111827;
@@ -40,74 +55,67 @@ def create_app() -> Flask:
     --dim:      #94a3b8;
     --mono:     'DM Mono', monospace;
     --sans:     'Syne', sans-serif;
-  }}
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; }}
-  header {{
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; }
+  header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 1.5rem 2rem; border-bottom: 1px solid var(--border);
     background: var(--surface);
-  }}
-  .logo {{ font-size: 1.1rem; font-weight: 800; letter-spacing: -.02em; color: var(--text); }}
-  .logo span {{ color: var(--accent); }}
-  .meta {{ font-family: var(--mono); font-size: .72rem; color: var(--muted); text-align: right; line-height: 1.6; }}
-  .dot {{ display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--gain);
-         box-shadow: 0 0 8px var(--gain); animation: pulse 2s ease-in-out infinite; margin-right: 5px; }}
-  @keyframes pulse {{ 0%,100%{{opacity:1}} 50%{{opacity:.4}} }}
-  .kpis {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: 1px;
-          background: var(--border); border-bottom: 1px solid var(--border); }}
-  .kpi {{ background: var(--surface); padding: 1.25rem 1.5rem; }}
-  .kpi-label {{ font-family: var(--mono); font-size: .65rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: .4rem; }}
-  .kpi-val {{ font-size: 1.45rem; font-weight: 700; letter-spacing: -.03em; }}
-  .kpi-sub {{ font-family: var(--mono); font-size: .7rem; color: var(--muted); margin-top: .2rem; }}
-  .pos {{ color: var(--gain); }} .neg {{ color: var(--loss); }} .gold {{ color: var(--gold); }}
-  main {{ padding: 2rem; display: flex; flex-direction: column; gap: 2rem; }}
-  .table-wrap {{ overflow-x: auto; border-radius: 8px; border: 1px solid var(--border); }}
-  table {{ width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: .75rem; }}
-  thead th {{
-    background: var(--card); padding: .75rem 1rem; text-align: right;
-    font-size: .62rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
-    white-space: nowrap; border-bottom: 1px solid var(--border);
-  }}
-  thead th:first-child, thead th:nth-child(2), thead th:nth-child(3) {{ text-align: left; }}
-  tbody tr {{ border-bottom: 1px solid var(--border); transition: background .15s; }}
-  tbody tr:last-child {{ border-bottom: none; }}
-  tbody tr:hover {{ background: rgba(59,130,246,.05); }}
-  td {{ padding: .65rem 1rem; white-space: nowrap; }}
-  td:not(:first-child):not(:nth-child(2)):not(:nth-child(3)) {{ text-align: right; }}
-  .ticker {{ font-weight: 500; color: var(--accent); font-size: .8rem; }}
-  .name {{ color: var(--dim); font-size: .72rem; }}
-  .badge {{
-    display: inline-block; padding: .1rem .45rem; border-radius: 3px; font-size: .6rem;
-    letter-spacing: .06em; text-transform: uppercase; font-weight: 500;
-  }}
-  .badge-ibkr   {{ background: #1e3a5f; color: #60a5fa; }}
-  .badge-ms     {{ background: #1a3a2a; color: #34d399; }}
-  .badge-ep     {{ background: #3a2a10; color: #fbbf24; }}
-  .badge-rsu    {{ background: #2a1a3a; color: #c084fc; }}
-  .badge-espp   {{ background: #3a2010; color: #fb923c; }}
-  .pnl-cell {{ font-weight: 500; }}
-  tfoot td {{ background: var(--card); font-weight: 600; border-top: 2px solid var(--border); }}
-  .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px,1fr)); gap: 1rem; }}
-  .card {{ background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem 1.5rem; }}
-  .card-title {{ font-size: .65rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
-                margin-bottom: 1rem; font-family: var(--mono); }}
-  .line {{ display: flex; justify-content: space-between; align-items: center; padding: .3rem 0;
-          border-bottom: 1px solid rgba(255,255,255,.04); }}
-  .line:last-child {{ border-bottom: none; }}
-  .line-label {{ font-size: .72rem; color: var(--dim); }}
-  .line-val {{ font-family: var(--mono); font-size: .78rem; font-weight: 500; }}
-  .line-sep {{ border-top: 1px solid var(--border); margin: .5rem 0; }}
-  .line.total .line-label {{ font-weight: 600; color: var(--text); font-size: .76rem; }}
-  .line.total .line-val {{ font-size: .9rem; }}
-  .refresh-btn {{
-    background: var(--accent); color: #fff; border: none; padding: .6rem 1.4rem;
-    border-radius: 5px; cursor: pointer; font-family: var(--sans); font-weight: 600;
-    font-size: .8rem; transition: opacity .2s;
-  }}
-  .refresh-btn:hover {{ opacity: .8; }}
-  .refresh-btn:disabled {{ opacity: .4; cursor: default; }}
-  .note {{ font-family: var(--mono); font-size: .62rem; color: var(--muted); line-height: 1.7; max-width: 800px; }}
+  }
+  .logo { font-size: 1.1rem; font-weight: 800; letter-spacing: -.02em; color: var(--text); }
+  .logo span { color: var(--accent); }
+  .meta { font-family: var(--mono); font-size: .72rem; color: var(--muted); text-align: right; line-height: 1.6; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--gain);
+         box-shadow: 0 0 8px var(--gain); animation: pulse 2s ease-in-out infinite; margin-right: 5px; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .controls { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin: 1rem 2rem; }
+  .control { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+  .control-label { font-family: var(--mono); font-size: .65rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: .75rem; display: block; }
+  .checkbox { display: flex; align-items: center; gap: .5rem; margin-bottom: .5rem; font-family: var(--mono); color: var(--text); font-size: .8rem; }
+  .checkbox input { accent-color: var(--accent); }
+  .stock-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: .5rem; max-height: 260px; overflow-y: auto; }
+  .stock-option { display: flex; align-items: center; gap: .5rem; padding: .35rem .5rem; border-radius: 6px; background: rgba(255,255,255,.03); border: 1px solid var(--border); }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: 1px; background: var(--border); border-bottom: 1px solid var(--border); }
+  .kpi { background: var(--surface); padding: 1.25rem 1.5rem; }
+  .kpi-label { font-family: var(--mono); font-size: .65rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: .4rem; }
+  .kpi-val { font-size: 1.45rem; font-weight: 700; letter-spacing: -.03em; }
+  .kpi-sub { font-family: var(--mono); font-size: .7rem; color: var(--muted); margin-top: .2rem; }
+  .pos { color: var(--gain); } .neg { color: var(--loss); } .gold { color: var(--gold); }
+  main { padding: 2rem; display: flex; flex-direction: column; gap: 2rem; }
+  .table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid var(--border); }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: .75rem; }
+  thead th { background: var(--card); padding: .75rem 1rem; text-align: right; font-size: .62rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); white-space: nowrap; border-bottom: 1px solid var(--border); }
+  thead th:first-child, thead th:nth-child(2), thead th:nth-child(3) { text-align: left; }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background .15s; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: rgba(59,130,246,.05); }
+  td { padding: .65rem 1rem; white-space: nowrap; }
+  td:not(:first-child):not(:nth-child(2)):not(:nth-child(3)) { text-align: right; }
+  .ticker { font-weight: 500; color: var(--accent); font-size: .8rem; }
+  .name { color: var(--dim); font-size: .72rem; }
+  .badge { display: inline-block; padding: .1rem .45rem; border-radius: 3px; font-size: .6rem; letter-spacing: .06em; text-transform: uppercase; font-weight: 500; }
+  .badge-ibkr { background: #1e3a5f; color: #60a5fa; }
+  .badge-ms { background: #1a3a2a; color: #34d399; }
+  .badge-ep { background: #3a2a10; color: #fbbf24; }
+  .badge-rsu { background: #2a1a3a; color: #c084fc; }
+  .badge-espp { background: #3a2010; color: #fb923c; }
+  .pnl-cell { font-weight: 500; }
+  tfoot td { background: var(--card); font-weight: 600; border-top: 2px solid var(--border); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px,1fr)); gap: 1rem; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem 1.5rem; }
+  .card-title { font-size: .65rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 1rem; font-family: var(--mono); }
+  .line { display: flex; justify-content: space-between; align-items: center; padding: .3rem 0; border-bottom: 1px solid rgba(255,255,255,.04); }
+  .line:last-child { border-bottom: none; }
+  .line-label { font-size: .72rem; color: var(--dim); }
+  .line-val { font-family: var(--mono); font-size: .78rem; font-weight: 500; }
+  .line-sep { border-top: 1px solid var(--border); margin: .5rem 0; }
+  .line.total .line-label { font-weight: 600; color: var(--text); font-size: .76rem; }
+  .line.total .line-val { font-size: .9rem; }
+  .refresh-btn { background: var(--accent); color: #fff; border: none; padding: .6rem 1.4rem; border-radius: 5px; cursor: pointer; font-family: var(--sans); font-weight: 600; font-size: .8rem; transition: opacity .2s; }
+  .refresh-btn:hover { opacity: .8; }
+  .refresh-btn:disabled { opacity: .4; cursor: default; }
+  .note { font-family: var(--mono); font-size: .62rem; color: var(--muted); line-height: 1.7; max-width: 800px; }
 </style>
 </head>
 <body>
@@ -117,9 +125,21 @@ def create_app() -> Flask:
   <div class="meta">
     <span class="dot"></span><span id="as-of">Loading…</span><br>
     EUR/USD <span id="fx-rate">—</span>
-    &nbsp;|&nbsp; {country_display} CGT {cgt_rate_pct}% &nbsp;|&nbsp; {cgt_exemption} exemption
+    &nbsp;|&nbsp; @@COUNTRY_DISPLAY@@ CGT @@CGT_RATE_PERCENT@@% &nbsp;|&nbsp; @@CGT_EXEMPTION@@ exemption
   </div>
 </header>
+
+<div class="controls">
+  <div class="control">
+    <div class="control-label">Countries</div>
+    <div id="country-list"></div>
+  </div>
+  <div class="control">
+    <div class="control-label">Stocks</div>
+    <label class="checkbox"><input type="checkbox" id="stock-all" checked> Select all</label>
+    <div id="stock-list" class="stock-list"></div>
+  </div>
+</div>
 
 <div class="kpis" id="kpis">
   <div class="kpi"><div class="kpi-label">Market Value</div><div class="kpi-val" id="k-val">—</div></div>
@@ -163,16 +183,11 @@ def create_app() -> Flask:
       <div class="line total"><span class="line-label">Total Fees</span><span class="line-val" id="s-tot-fees">—</span></div>
     </div>
 
-    <div class="card">
-      <div class="card-title">{country_display} CGT Calculation</div>
-      <div class="line"><span class="line-label">Net PnL (USD)</span><span class="line-val" id="t-pnl-usd">—</span></div>
-      <div class="line"><span class="line-label">Net PnL (EUR)</span><span class="line-val" id="t-pnl-eur">—</span></div>
-      <div class="line"><span class="line-label">Annual exemption</span><span class="line-val">− {cgt_exemption}</span></div>
-      <div class="line"><span class="line-label">Taxable gain (EUR)</span><span class="line-val" id="t-taxable">—</span></div>
-      <div class="line-sep"></div>
-      <div class="line total"><span class="line-label">CGT @ {cgt_rate_pct}% (EUR)</span><span class="line-val neg" id="t-cgt-eur">—</span></div>
-      <div class="line total"><span class="line-label">CGT (USD equiv.)</span><span class="line-val neg" id="t-cgt-usd">—</span></div>
-    </div>
+  </div>
+
+  <div id="country-summaries" class="cards"></div>
+
+  <div class="cards">
 
     <div class="card">
       <div class="card-title">Bottom Line</div>
@@ -200,88 +215,167 @@ def create_app() -> Flask:
 
 <script>
 const $ = id => document.getElementById(id);
-const usd = (v, decimals=0) => v == null ? '—' : '$' + v.toLocaleString('en-US', {{minimumFractionDigits:decimals, maximumFractionDigits:decimals}});
-const eur = (v, decimals=0) => v == null ? '—' : '€' + v.toLocaleString('en-US', {{minimumFractionDigits:decimals, maximumFractionDigits:decimals}});
+const usd = (v, decimals=0) => v == null ? '—' : '$' + v.toLocaleString('en-US', {minimumFractionDigits:decimals, maximumFractionDigits:decimals});
+const eur = (v, decimals=0) => v == null ? '—' : '€' + v.toLocaleString('en-US', {minimumFractionDigits:decimals, maximumFractionDigits:decimals});
+const zar = (v, decimals=0) => v == null ? '—' : 'R' + v.toLocaleString('en-US', {minimumFractionDigits:decimals, maximumFractionDigits:decimals});
 const pct = v => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
 const signed = (v, fmt) => v == null ? '—' : (v >= 0 ? '+' : '') + fmt(v);
 const cls = v => v == null ? '' : v >= 0 ? 'pos' : 'neg';
+const availableCountries = @@COUNTRY_OPTIONS@@;
+const allTickers = @@STOCK_OPTIONS@@;
+const defaultCountries = @@DEFAULT_COUNTRIES@@;
 
-function badge(platform, type) {{
+function badge(platform, type) {
   const pm = platform === 'IBKR' ? 'badge-ibkr' : platform === 'Morgan Stanley' ? 'badge-ms' : 'badge-ep';
   const tp = type === 'RSU' ? 'badge-rsu' : type === 'ESPP' ? 'badge-espp' : '';
-  return `<span class="badge ${{pm}}">${{platform}}</span> ${{tp ? `<span class="badge ${{tp}}">${{type}}</span>` : ''}}`;
-}}
+  return `<span class="badge ${pm}">${platform}</span> ${tp ? `<span class="badge ${tp}">${type}</span>` : ''}`;
+}
 
-async function load() {{
+function getSelectedCountries() {
+  return Array.from(document.querySelectorAll('input[name="country"]:checked')).map(el => el.value);
+}
+
+function getSelectedTickers() {
+  const checked = Array.from(document.querySelectorAll('input[name="stock"]:checked')).map(el => el.value);
+  return checked.length ? checked : allTickers;
+}
+
+function updateStockAllCheckbox() {
+  const selected = getSelectedTickers();
+  $('stock-all').checked = selected.length === allTickers.length;
+}
+
+function renderCountryList() {
+  const list = $('country-list');
+  list.innerHTML = '';
+  for (const country of availableCountries) {
+    const option = document.createElement('label');
+    option.className = 'checkbox';
+    const isChecked = defaultCountries.includes(country.value);
+    option.innerHTML = `<input type="checkbox" name="country" value="${country.value}" ${isChecked ? 'checked' : ''}> ${country.label}`;
+    list.appendChild(option);
+  }
+  document.querySelectorAll('input[name="country"]').forEach(input => input.addEventListener('change', onSelectionChange));
+}
+
+function onSelectionChange() {
+  updateStockAllCheckbox();
+  load();
+}
+
+function renderStockList() {
+  const list = $('stock-list');
+  list.innerHTML = '';
+  for (const ticker of allTickers) {
+    const label = document.createElement('label');
+    label.className = 'stock-option';
+    label.innerHTML = `<input type="checkbox" name="stock" value="${ticker}" checked> ${ticker}`;
+    list.appendChild(label);
+  }
+  document.querySelectorAll('input[name="stock"]').forEach(input => input.addEventListener('change', onSelectionChange));
+  $('stock-all').addEventListener('change', () => {
+    const checked = $('stock-all').checked;
+    document.querySelectorAll('input[name="stock"]').forEach(input => input.checked = checked);
+    load();
+  });
+}
+
+function renderCountrySummaries(summaries) {
+  const container = $('country-summaries');
+  if (!summaries || !summaries.length) {
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = summaries.map(summary => {
+    const localSign = summary.local_currency === 'EUR' ? eur : usd;
+    return `
+      <div class="card">
+        <div class="card-title">${summary.country} CGT Summary</div>
+        <div class="line"><span class="line-label">Local currency</span><span class="line-val">${summary.local_currency}</span></div>
+        <div class="line"><span class="line-label">Net PnL (${summary.local_currency})</span><span class="line-val">${localSign(summary.net_pnl_local, 2)}</span></div>
+        <div class="line"><span class="line-label">Annual exemption</span><span class="line-val">− ${summary.cgt_exemption}</span></div>
+        <div class="line"><span class="line-label">Taxable gain (${summary.local_currency})</span><span class="line-val">${localSign(summary.taxable_local, 2)}</span></div>
+        <div class="line-sep"></div>
+        <div class="line total"><span class="line-label">CGT @ ${summary.cgt_rate_pct}% (${summary.local_currency})</span><span class="line-val neg">${localSign(summary.cgt_local, 2)}</span></div>
+        <div class="line total"><span class="line-label">CGT (USD equivalent)</span><span class="line-val neg">${usd(summary.cgt_usd, 2)}</span></div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function load() {
   const btn = $('refresh-btn');
-  btn.disabled = true; btn.textContent = 'Fetching…';
-  try {{
-    const res = await fetch('/api/data');
-    if (!res.ok) {{
-      throw new Error(`HTTP ${{res.status}}`);
-    }}
+  btn.disabled = true;
+  btn.textContent = 'Fetching…';
+  try {
+    const countries = getSelectedCountries();
+    const stocks = getSelectedTickers();
+    const url = `/api/data?countries=${encodeURIComponent(countries.join(','))}&stocks=${encodeURIComponent(stocks.join(','))}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
     const d = await res.json();
     render(d);
-  }} catch(e) {{
+  } catch (e) {
     alert('Price fetch failed: ' + e);
-  }} finally {{
-    btn.disabled = false; btn.textContent = '↻ Refresh Prices';
-  }}
-}}
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '↻ Refresh Prices';
+  }
+}
 
-function render(d) {{
+function render(d) {
   $('as-of').textContent = d.as_of;
   $('fx-rate').textContent = d.eur_usd.toFixed(4);
 
   const t = d.totals;
   $('k-val').textContent  = usd(t.value_usd);
   $('k-cost').textContent = usd(t.cost_usd);
-  $('k-pnl').innerHTML    = `<span class="${{cls(t.pnl_usd)}}">${{signed(t.pnl_usd, usd)}}</span>`;
+  $('k-pnl').innerHTML    = `<span class="${cls(t.pnl_usd)}">${signed(t.pnl_usd, usd)}</span>`;
   $('k-fees').textContent = usd(t.total_fees + t.fx_fee, 2);
-  $('k-cgt').textContent  = eur(t.cgt_eur);
-  $('k-net').textContent  = eur(t.net_cash_eur);
+  $('k-cgt').textContent  = usd(t.cgt_usd, 2);
+  $('k-net').textContent  = eur(t.net_cash_eur, 2);
 
-  // Table
   const tbody = $('tbody');
   tbody.innerHTML = '';
-  for (const s of d.stocks) {{
+  for (const s of d.stocks) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td class="ticker">${{s.ticker}}</td>
-      <td class="name">${{s.name}}</td>
-      <td>${{badge(s.platform, s.type)}}</td>
-      <td>${{s.units.toLocaleString('en-US', {{maximumFractionDigits:4}})}}</td>
-      <td>${{usd(s.cost_usd)}}</td>
-      <td>${{usd(s.price, 2)}}</td>
-      <td>${{usd(s.value_usd)}}</td>
-      <td class="pnl-cell ${{cls(s.pnl_usd)}}">${{signed(s.pnl_usd, usd)}}</td>
-      <td class="${{cls(s.pnl_pct)}}">${{pct(s.pnl_pct)}}</td>
-      <td>${{usd(s.comm, 2)}}</td>
-      <td>${{usd(s.sec != null && s.finra != null ? s.sec + s.finra : null, 2)}}</td>
-      <td>${{usd(s.total_fees, 2)}}</td>
-      <td class="pnl-cell ${{cls(s.net_pnl_usd)}}">${{signed(s.net_pnl_usd, usd)}}</td>
+      <td class="ticker">${s.ticker}</td>
+      <td class="name">${s.name}</td>
+      <td>${badge(s.platform, s.type)}</td>
+      <td>${s.units.toLocaleString('en-US', {maximumFractionDigits:4})}</td>
+      <td>${usd(s.cost_usd)}</td>
+      <td>${usd(s.price, 2)}</td>
+      <td>${usd(s.value_usd)}</td>
+      <td class="pnl-cell ${cls(s.pnl_usd)}">${signed(s.pnl_usd, usd)}</td>
+      <td class="${cls(s.pnl_pct)}">${pct(s.pnl_pct)}</td>
+      <td>${usd(s.comm, 2)}</td>
+      <td>${usd(s.sec != null && s.finra != null ? s.sec + s.finra : null, 2)}</td>
+      <td>${usd(s.total_fees, 2)}</td>
+      <td class="pnl-cell ${cls(s.net_pnl_usd)}">${signed(s.net_pnl_usd, usd)}</td>
     `;
     tbody.appendChild(tr);
-  }}
+  }
 
   $('tfoot').innerHTML = `<tr>
     <td colspan="3">TOTAL</td>
     <td></td>
-    <td>${{usd(t.cost_usd)}}</td>
+    <td>${usd(t.cost_usd)}</td>
     <td></td>
-    <td>${{usd(t.value_usd)}}</td>
-    <td class="${{cls(t.pnl_usd)}}">${{signed(t.pnl_usd, usd)}}</td>
+    <td>${usd(t.value_usd)}</td>
+    <td class="${cls(t.pnl_usd)}">${signed(t.pnl_usd, usd)}</td>
     <td></td>
     <td></td><td></td>
-    <td>${{usd(t.total_fees, 2)}}</td>
-    <td class="${{cls(t.pnl_usd - t.total_fees)}}">${{signed(t.pnl_usd - t.total_fees, usd)}}</td>
+    <td>${usd(t.total_fees, 2)}</td>
+    <td class="${cls(t.pnl_usd - t.total_fees)}">${signed(t.pnl_usd - t.total_fees, usd)}</td>
   </tr>`;
 
-  // Cards — fees
   const stocks = d.stocks;
   const ibkr = stocks.filter(s => s.platform === 'IBKR');
-  const ms   = stocks.find(s => s.platform === 'Morgan Stanley');
-  const ep   = stocks.find(s => s.platform === 'Equate Plus');
+  const ms = stocks.find(s => s.platform === 'Morgan Stanley');
+  const ep = stocks.find(s => s.platform === 'Equate Plus');
 
   $('s-ibkr-comm').textContent = usd(ibkr.reduce((a,s) => a + (s.comm||0), 0), 2);
   const reg = stocks.reduce((a,s) => a + ((s.sec||0) + (s.finra||0)), 0);
@@ -291,36 +385,74 @@ function render(d) {{
   $('s-fx').textContent = usd(t.fx_fee, 2);
   $('s-tot-fees').textContent = usd(t.total_fees + t.fx_fee, 2);
 
-  // Cards — CGT
-  $('t-pnl-usd').textContent = usd(t.pnl_usd);
-  $('t-pnl-eur').textContent = eur(t.net_pnl_eur);
-  $('t-taxable').textContent = eur(t.taxable_eur);
-  $('t-cgt-eur').textContent = eur(t.cgt_eur);
-  $('t-cgt-usd').textContent = usd(t.cgt_usd);
-
   // Cards — bottom line
   $('b-gross').textContent  = usd(t.value_usd);
   $('b-fees').textContent   = '− ' + usd(t.total_fees + t.fx_fee, 2);
   $('b-cgt').textContent    = '− ' + usd(t.cgt_usd);
   $('b-net-usd').textContent = usd(t.net_cash_usd);
-  $('b-net-eur').textContent = eur(t.net_cash_eur);
-}}
+  $('b-net-eur').textContent = eur(t.net_cash_eur, 2);
 
+  renderCountrySummaries(d.country_summaries);
+}
+
+renderCountryList();
+renderStockList();
 load();
 </script>
 </body>
 </html>
 """
 
-    @app.route("/")
+    html = html_template.replace('@@COUNTRY_DISPLAY@@', default_display)
+    html = html.replace('@@CGT_RATE_PERCENT@@', str(default_cgt_rate_pct))
+    html = html.replace('@@CGT_EXEMPTION@@', default_cgt_exemption)
+    html = html.replace('@@COUNTRY_OPTIONS@@', country_options_json)
+    html = html.replace('@@STOCK_OPTIONS@@', stock_options_json)
+    html = html.replace('@@DEFAULT_COUNTRIES@@', default_countries_json)
+
+    @app.route('/')
     def index():
         return html
 
-    @app.route("/api/data")
+    @app.route('/api/data')
     def api_data():
-        prices, eur_usd = price_fetcher.fetch()
+        prices, eur_usd, zar_usd = price_fetcher.fetch()
+
+        requested_tickers = [ticker.strip().upper() for ticker in request.args.get('stocks', '').split(',') if ticker.strip()]
+        requested_tickers = [ticker for ticker in requested_tickers if ticker in valid_tickers]
+        if not requested_tickers:
+            requested_tickers = valid_tickers
+
+        requested_countries = [country.strip() for country in request.args.get('countries', '').split(',') if country.strip()]
+        requested_countries = [country for country in requested_countries if country in SUPPORTED_COUNTRIES]
+        if not requested_countries:
+            requested_countries = default_countries
+
+        primary_country = requested_countries[0]
+        portfolio = Portfolio.from_definition({ticker: PORTFOLIO[ticker] for ticker in requested_tickers}, country=primary_country)
         portfolio.update_prices(prices)
-        return jsonify(portfolio.as_dict(eur_usd))
+        data = portfolio.as_dict(eur_usd, zar_usd)
+        data['selected_countries'] = [COUNTRY_LABELS.get(country, country) for country in requested_countries]
+        data['selected_tickers'] = requested_tickers
+        data['country_summaries'] = []
+
+        for country in requested_countries:
+            country_portfolio = Portfolio.from_definition({ticker: PORTFOLIO[ticker] for ticker in requested_tickers}, country=country)
+            country_portfolio.update_prices(prices)
+            totals = country_portfolio.as_dict(eur_usd, zar_usd)['totals']
+            data['country_summaries'].append({
+                'country': COUNTRY_LABELS.get(country, country),
+                'country_key': country,
+                'cgt_rate_pct': int(country_portfolio.cgt_calculator.rate * 100),
+                'cgt_exemption': f"€{country_portfolio.cgt_calculator.exemption:,.0f}" if country == 'Ireland' else f"R{country_portfolio.cgt_calculator.exemption:,.0f}",
+                'local_currency': totals['local_currency'],
+                'net_pnl_local': totals['net_pnl_local'],
+                'taxable_local': totals['taxable_local'],
+                'cgt_local': totals['cgt_local'],
+                'cgt_usd': totals['cgt_usd'],
+            })
+
+        return jsonify(data)
 
     return app
 

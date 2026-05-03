@@ -22,6 +22,7 @@ def _env_int(name: str, default: int) -> int:
 
 FX_TICKER = os.getenv("FX_TICKER", "EURUSD=X")
 DEFAULT_EUR_USD = _env_float("EUR_USD_FALLBACK", 1.13)
+DEFAULT_ZAR_USD = _env_float("ZAR_USD_FALLBACK", 0.054)
 PORT = _env_int("PORT", 5000)
 COUNTRY = os.getenv("COUNTRY", "Ireland")
 

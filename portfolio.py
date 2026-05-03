@@ -94,15 +94,16 @@ class Position:
 
 
 class Portfolio:
-    def __init__(self, positions: Iterable[Position], fx_ticker: str = "EURUSD=X") -> None:
+    def __init__(self, positions: Iterable[Position], fx_ticker: str = "EURUSD=X", country: str = COUNTRY) -> None:
         self.positions = list(positions)
         self.fx_ticker = fx_ticker
-        rate, exemption = get_cgt_params(COUNTRY)
-        self.cgt_calculator = CGTCalculator(rate, exemption, COUNTRY)
+        self.country = country
+        rate, exemption = get_cgt_params(country)
+        self.cgt_calculator = CGTCalculator(rate, exemption, country)
         self.fee_calculator = FeeCalculator()
 
     @classmethod
-    def from_definition(cls, portfolio_definition: dict[str, dict]) -> "Portfolio":
+    def from_definition(cls, portfolio_definition: dict[str, dict], fx_ticker: str = "EURUSD=X", country: str = COUNTRY) -> "Portfolio":
         positions = []
         for ticker, info in portfolio_definition.items():
             lots = [Lot(date, cost, units) for date, cost, units in info["lots"]]
@@ -115,13 +116,17 @@ class Portfolio:
                     lots=lots,
                 )
             )
-        return cls(positions)
+        return cls(positions, fx_ticker=fx_ticker, country=country)
 
     def update_prices(self, prices: dict[str, float | None]) -> None:
         for position in self.positions:
             position.price = prices.get(position.ticker)
 
-    def as_dict(self, eur_usd: float) -> dict[str, object]:
+    def filtered(self, tickers: list[str]) -> "Portfolio":
+        filtered_positions = [position for position in self.positions if position.ticker in tickers]
+        return Portfolio(filtered_positions, fx_ticker=self.fx_ticker, country=self.country)
+
+    def as_dict(self, eur_usd: float, zar_usd: float = 0.054) -> dict[str, object]:
         stocks = [position.to_dict() for position in self.positions]
         valid_stocks = [stock for stock in stocks if stock["value_usd"] is not None]
 
@@ -132,7 +137,7 @@ class Portfolio:
 
         ibkr_value = sum(stock["value_usd"] for stock in valid_stocks if stock["platform"] == "IBKR")
         fx_fee = self.fee_calculator.fx_fee(ibkr_value)
-        cgt_info = self.cgt_calculator.compute(total_pnl, eur_usd)
+        cgt_info = self.cgt_calculator.compute(total_pnl, eur_usd, zar_usd)
 
         net_cash_usd = total_value - total_fees - fx_fee - cgt_info["cgt_usd"]
 
@@ -146,9 +151,10 @@ class Portfolio:
                 "pnl_usd": round(total_pnl, 2),
                 "total_fees": round(total_fees, 2),
                 "fx_fee": round(fx_fee, 2),
-                "net_pnl_eur": cgt_info["net_pnl_eur"],
-                "taxable_eur": cgt_info["taxable_eur"],
-                "cgt_eur": cgt_info["cgt_eur"],
+                "net_pnl_local": cgt_info["net_pnl_local"],
+                "taxable_local": cgt_info["taxable_local"],
+                "cgt_local": cgt_info["cgt_local"],
+                "local_currency": cgt_info["local_currency"],
                 "cgt_usd": cgt_info["cgt_usd"],
                 "net_cash_usd": round(net_cash_usd, 2),
                 "net_cash_eur": round(net_cash_usd / eur_usd, 2),
