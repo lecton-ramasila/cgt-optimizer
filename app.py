@@ -524,3 +524,9 @@ load();
 
 
 app = create_app()
+
+if __name__ == "__main__":
+    import os
+    port = int(os.getenv("PORT", 5000))
+    print(f"\n  Portfolio Dashboard\n  ───────────────────\n  http://localhost:{port}\n")
+    app.run(port=port, debug=False)
