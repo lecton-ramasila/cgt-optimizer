@@ -316,6 +316,7 @@ function renderCountrySummaries(summaries) {
         <div class="line-sep"></div>
         <div class="line total"><span class="line-label">CGT @ ${summary.cgt_rate_pct}% (${summary.local_currency})</span><span class="line-val neg">${localSign(summary.cgt_local, 2)}</span></div>
         <div class="line total"><span class="line-label">CGT (USD equivalent)</span><span class="line-val neg">${usd(summary.cgt_usd, 2)}</span></div>
+        <div class="line total"><span class="line-label">Decision</span><span class="line-val">${summary.sale_signal}</span></div>
       </div>
     `;
   }).join('');
@@ -438,7 +439,9 @@ function render(d) {
   const profitLocal = displayNetCash - investedLocal;
   const priceContribution = t.pnl_usd;
   const costContribution = -(adminFees + t.cgt_usd);
-  const signal = profitUsd > 0 ? `ELIGIBLE FOR SALE in ${d.selected_countries?.[0] || 'selected country'}` : (profitUsd === 0 ? 'STABLE' : 'HOLD');
+  const signal = (d.selected_countries && d.selected_countries.length > 1)
+    ? 'See country cards for per-country decision'
+    : (profitUsd > 0 ? `ELIGIBLE FOR SALE in ${d.selected_countries?.[0] || 'selected country'}` : (profitUsd === 0 ? 'STABLE' : 'HOLD'));
   $('b-invest-stock').textContent = usd(t.cost_usd, 2);
   $('b-invest-local').textContent = displayFmt(investedLocal, 2);
   $('b-pnl-usd-story').textContent = signed(profitUsd, v => usd(v, 2));
@@ -497,6 +500,8 @@ load();
             country_portfolio = Portfolio.from_definition({ticker: PORTFOLIO[ticker] for ticker in requested_tickers}, country=country)
             country_portfolio.update_prices(prices)
             totals = country_portfolio.as_dict(eur_usd, zar_usd)['totals']
+            profit_usd = totals['net_cash_usd'] - totals['cost_usd']
+            sale_signal = f"ELIGIBLE FOR SALE in {COUNTRY_LABELS.get(country, country)}" if profit_usd > 0 else ("STABLE" if profit_usd == 0 else f"HOLD in {COUNTRY_LABELS.get(country, country)}")
             data['country_summaries'].append({
                 'country': COUNTRY_LABELS.get(country, country),
                 'country_key': country,
@@ -507,6 +512,7 @@ load();
                 'taxable_local': totals['taxable_local'],
                 'cgt_local': totals['cgt_local'],
                 'cgt_usd': totals['cgt_usd'],
+                'sale_signal': sale_signal,
             })
 
         return jsonify(data)
