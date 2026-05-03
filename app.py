@@ -23,7 +23,7 @@ def create_app() -> Flask:
     default_cgt_exemption = (
         f"€{Portfolio.from_definition(PORTFOLIO, country=COUNTRY).cgt_calculator.exemption:,.0f}"
         if COUNTRY == "Ireland"
-        else f"R{Portfolio.from_definition(PORTFOLIO, country=COUNTRY).cgt_calculator.exemption:,.0f}"
+        else f"${Portfolio.from_definition(PORTFOLIO, country=COUNTRY).cgt_calculator.exemption:,.0f}"
     )
     country_options_json = json.dumps(
         [{"value": country, "label": COUNTRY_LABELS[country]} for country in SUPPORTED_COUNTRIES]
@@ -147,7 +147,7 @@ def create_app() -> Flask:
   <div class="kpi"><div class="kpi-label">Gross PnL</div><div class="kpi-val" id="k-pnl">—</div></div>
   <div class="kpi"><div class="kpi-label">Total Broker Fees</div><div class="kpi-val" id="k-fees">—</div></div>
   <div class="kpi"><div class="kpi-label">CGT Liability</div><div class="kpi-val neg" id="k-cgt">—</div></div>
-  <div class="kpi"><div class="kpi-label">Net Cash (EUR)</div><div class="kpi-val gold" id="k-net">—</div></div>
+  <div class="kpi"><div class="kpi-label">Net Cash (Local)</div><div class="kpi-val gold" id="k-net">—</div></div>
 </div>
 
 <main>
@@ -196,7 +196,7 @@ def create_app() -> Flask:
       <div class="line"><span class="line-label">Less: CGT</span><span class="line-val neg" id="b-cgt">—</span></div>
       <div class="line-sep"></div>
       <div class="line total"><span class="line-label">Net cash (USD)</span><span class="line-val gold" id="b-net-usd">—</span></div>
-      <div class="line total"><span class="line-label">Net cash (EUR)</span><span class="line-val gold" id="b-net-eur">—</span></div>
+      <div class="line total"><span class="line-label">Net cash (Local)</span><span class="line-val gold" id="b-net-eur">—</span></div>
     </div>
 
   </div>
@@ -287,7 +287,7 @@ function renderCountrySummaries(summaries) {
     return;
   }
   container.innerHTML = summaries.map(summary => {
-    const localSign = summary.local_currency === 'EUR' ? eur : usd;
+    const localSign = summary.local_currency === 'EUR' ? eur : summary.local_currency === 'ZAR' ? zar : usd;
     return `
       <div class="card">
         <div class="card-title">${summary.country} CGT Summary</div>
@@ -335,7 +335,7 @@ function render(d) {
   $('k-pnl').innerHTML    = `<span class="${cls(t.pnl_usd)}">${signed(t.pnl_usd, usd)}</span>`;
   $('k-fees').textContent = usd(t.total_fees + t.fx_fee, 2);
   $('k-cgt').textContent  = usd(t.cgt_usd, 2);
-  $('k-net').textContent  = eur(t.net_cash_eur, 2);
+  $('k-net').textContent  = (t.local_currency === 'EUR' ? eur : t.local_currency === 'ZAR' ? zar : usd)(t.net_cash_local, 2);
 
   const tbody = $('tbody');
   tbody.innerHTML = '';
@@ -390,7 +390,7 @@ function render(d) {
   $('b-fees').textContent   = '− ' + usd(t.total_fees + t.fx_fee, 2);
   $('b-cgt').textContent    = '− ' + usd(t.cgt_usd);
   $('b-net-usd').textContent = usd(t.net_cash_usd);
-  $('b-net-eur').textContent = eur(t.net_cash_eur, 2);
+  $('b-net-eur').textContent = (t.local_currency === 'EUR' ? eur : t.local_currency === 'ZAR' ? zar : usd)(t.net_cash_local, 2);
 
   renderCountrySummaries(d.country_summaries);
 }
@@ -444,7 +444,7 @@ load();
                 'country': COUNTRY_LABELS.get(country, country),
                 'country_key': country,
                 'cgt_rate_pct': int(country_portfolio.cgt_calculator.rate * 100),
-                'cgt_exemption': f"€{country_portfolio.cgt_calculator.exemption:,.0f}" if country == 'Ireland' else f"R{country_portfolio.cgt_calculator.exemption:,.0f}",
+                'cgt_exemption': f"€{country_portfolio.cgt_calculator.exemption:,.0f}" if country == 'Ireland' else f"${country_portfolio.cgt_calculator.exemption:,.0f}",
                 'local_currency': totals['local_currency'],
                 'net_pnl_local': totals['net_pnl_local'],
                 'taxable_local': totals['taxable_local'],

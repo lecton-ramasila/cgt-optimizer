@@ -27,7 +27,8 @@ class CGTCalculator:
             local_currency = "EUR"
         elif self.country == "SouthAfrica":
             net_pnl_local = net_pnl_usd / zar_usd
-            taxable_local = max(0.0, net_pnl_local - self.exemption)
+            exemption_local = self.exemption / zar_usd
+            taxable_local = max(0.0, net_pnl_local - exemption_local)
             cgt_local = taxable_local * self.rate
             cgt_usd = cgt_local * zar_usd
             local_currency = "ZAR"

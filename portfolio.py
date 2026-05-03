@@ -22,6 +22,7 @@ class Position:
     platform: str
     asset_type: str
     lots: list[Lot]
+    currency: str = "USD"
     price: float | None = None
     fee_calculator: FeeCalculator = field(default_factory=FeeCalculator)
 
@@ -79,6 +80,7 @@ class Position:
             "name": self.name,
             "platform": self.platform,
             "type": self.asset_type,
+            "currency": self.currency,
             "units": round(self.total_units, 4),
             "cost_usd": round(self.total_cost, 2),
             "price": round(self.price, 2) if self.price is not None else None,
@@ -114,6 +116,7 @@ class Portfolio:
                     platform=info["platform"],
                     asset_type=info["type"],
                     lots=lots,
+                    currency=info.get("currency", "USD"),
                 )
             )
         return cls(positions, fx_ticker=fx_ticker, country=country)
@@ -140,6 +143,7 @@ class Portfolio:
         cgt_info = self.cgt_calculator.compute(total_pnl, eur_usd, zar_usd)
 
         net_cash_usd = total_value - total_fees - fx_fee - cgt_info["cgt_usd"]
+        net_cash_local = net_cash_usd / eur_usd if cgt_info["local_currency"] == "EUR" else net_cash_usd / zar_usd
 
         return {
             "stocks": stocks,
@@ -157,7 +161,7 @@ class Portfolio:
                 "local_currency": cgt_info["local_currency"],
                 "cgt_usd": cgt_info["cgt_usd"],
                 "net_cash_usd": round(net_cash_usd, 2),
-                "net_cash_eur": round(net_cash_usd / eur_usd, 2),
+                "net_cash_local": round(net_cash_local, 2),
             },
         }
 
