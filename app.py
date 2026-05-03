@@ -197,6 +197,13 @@ def create_app() -> Flask:
       <div class="line-sep"></div>
       <div class="line total"><span class="line-label">Net cash (USD)</span><span class="line-val gold" id="b-net-usd">—</span></div>
       <div class="line total"><span class="line-label">Net cash (Local)</span><span class="line-val gold" id="b-net-eur">—</span></div>
+      <div class="line"><span class="line-label">Invested (stock ccy)</span><span class="line-val" id="b-invest-stock">—</span></div>
+      <div class="line"><span class="line-label">Invested (local ccy)</span><span class="line-val" id="b-invest-local">—</span></div>
+      <div class="line"><span class="line-label">Upfront investment fees</span><span class="line-val" id="b-upfront-fees">—</span></div>
+      <div class="line"><span class="line-label">Initial stock cost</span><span class="line-val" id="b-initial-stock-cost">—</span></div>
+      <div class="line"><span class="line-label">Initial cost + fees</span><span class="line-val" id="b-initial-plus-fees">—</span></div>
+      <div class="line"><span class="line-label">(Initial+fees) - (today-admin-cgt)</span><span class="line-val" id="b-current-vs-initial">—</span></div>
+      <div class="line total"><span class="line-label">Sale signal</span><span class="line-val" id="b-sale-signal">—</span></div>
     </div>
 
   </div>
@@ -224,6 +231,13 @@ const cls = v => v == null ? '' : v >= 0 ? 'pos' : 'neg';
 const availableCountries = @@COUNTRY_OPTIONS@@;
 const allTickers = @@STOCK_OPTIONS@@;
 const defaultCountries = @@DEFAULT_COUNTRIES@@;
+const baseCurrency = 'EUR';
+
+function currencyFormatter(currency) {
+  if (currency === 'EUR') return eur;
+  if (currency === 'ZAR') return zar;
+  return usd;
+}
 
 function badge(platform, type) {
   const pm = platform === 'IBKR' ? 'badge-ibkr' : platform === 'Morgan Stanley' ? 'badge-ms' : 'badge-ep';
@@ -303,12 +317,27 @@ function renderCountrySummaries(summaries) {
   }).join('');
 }
 
+function renderNoCountrySelected() {
+  $('as-of').textContent = 'No country selected';
+  $('fx-rate').textContent = '—';
+  ['k-val','k-cost','k-pnl','k-fees','k-cgt','k-net','b-gross','b-fees','b-cgt','b-net-usd','b-net-eur','b-invest-stock','b-invest-local','b-upfront-fees','b-current-vs-initial','b-initial-stock-cost','b-initial-plus-fees','b-sale-signal'].forEach(id => { if($(id)) $(id).textContent='No country selected'; });
+  $('tbody').innerHTML='';
+  $('tfoot').innerHTML='';
+  $('country-summaries').innerHTML='';
+}
+
 async function load() {
+  const selectedCountries = getSelectedCountries();
+  if (!selectedCountries.length) {
+    renderNoCountrySelected();
+    return;
+  }
+
   const btn = $('refresh-btn');
   btn.disabled = true;
   btn.textContent = 'Fetching…';
   try {
-    const countries = getSelectedCountries();
+    const countries = selectedCountries;
     const stocks = getSelectedTickers();
     const url = `/api/data?countries=${encodeURIComponent(countries.join(','))}&stocks=${encodeURIComponent(stocks.join(','))}`;
     const res = await fetch(url);
@@ -330,12 +359,17 @@ function render(d) {
   $('fx-rate').textContent = d.eur_usd.toFixed(4);
 
   const t = d.totals;
+  const useBaseCurrency = d.selected_countries && d.selected_countries.length > 1;
+  const displayCurrency = useBaseCurrency ? baseCurrency : t.local_currency;
+  const displayFmt = currencyFormatter(displayCurrency);
+  const displayNetCash = useBaseCurrency ? (t.net_cash_usd / d.eur_usd) : t.net_cash_local;
+  const investedLocal = useBaseCurrency ? (t.cost_usd / d.eur_usd) : (t.local_currency === 'EUR' ? t.cost_usd / d.eur_usd : t.cost_usd / (d.zar_usd || 0.054));
   $('k-val').textContent  = usd(t.value_usd);
   $('k-cost').textContent = usd(t.cost_usd);
   $('k-pnl').innerHTML    = `<span class="${cls(t.pnl_usd)}">${signed(t.pnl_usd, usd)}</span>`;
   $('k-fees').textContent = usd(t.total_fees + t.fx_fee, 2);
   $('k-cgt').textContent  = usd(t.cgt_usd, 2);
-  $('k-net').textContent  = (t.local_currency === 'EUR' ? eur : t.local_currency === 'ZAR' ? zar : usd)(t.net_cash_local, 2);
+  $('k-net').textContent  = displayFmt(displayNetCash, 2);
 
   const tbody = $('tbody');
   tbody.innerHTML = '';
@@ -390,7 +424,19 @@ function render(d) {
   $('b-fees').textContent   = '− ' + usd(t.total_fees + t.fx_fee, 2);
   $('b-cgt').textContent    = '− ' + usd(t.cgt_usd);
   $('b-net-usd').textContent = usd(t.net_cash_usd);
-  $('b-net-eur').textContent = (t.local_currency === 'EUR' ? eur : t.local_currency === 'ZAR' ? zar : usd)(t.net_cash_local, 2);
+  $('b-net-eur').textContent = displayFmt(displayNetCash, 2);
+
+  const upfrontFees = t.upfront_fees_usd || 0;
+  const adminFees = t.total_fees + t.fx_fee;
+  const grossDeltaUsd = (t.cost_usd + upfrontFees) - (t.value_usd - adminFees - t.cgt_usd);
+  const signal = grossDeltaUsd < 0 ? `HOLD` : grossDeltaUsd === 0 ? 'STABLE' : `ELIGIBLE FOR SALE in ${d.selected_countries?.[0] || 'selected country'}`;
+  $('b-invest-stock').textContent = usd(t.cost_usd, 2);
+  $('b-invest-local').textContent = displayFmt(investedLocal, 2);
+  $('b-upfront-fees').textContent = usd(upfrontFees, 2);
+  $('b-current-vs-initial').textContent = usd(grossDeltaUsd, 2);
+  $('b-initial-stock-cost').textContent = usd(t.cost_usd, 2);
+  $('b-initial-plus-fees').textContent = usd(t.cost_usd + upfrontFees, 2);
+  $('b-sale-signal').textContent = signal;
 
   renderCountrySummaries(d.country_summaries);
 }
@@ -432,6 +478,7 @@ load();
         portfolio = Portfolio.from_definition({ticker: PORTFOLIO[ticker] for ticker in requested_tickers}, country=primary_country)
         portfolio.update_prices(prices)
         data = portfolio.as_dict(eur_usd, zar_usd)
+        data['zar_usd'] = round(zar_usd, 4)
         data['selected_countries'] = [COUNTRY_LABELS.get(country, country) for country in requested_countries]
         data['selected_tickers'] = requested_tickers
         data['country_summaries'] = []
