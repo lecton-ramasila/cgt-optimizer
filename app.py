@@ -23,7 +23,7 @@ def create_app() -> Flask:
     default_cgt_exemption = (
         f"€{Portfolio.from_definition(PORTFOLIO, country=COUNTRY).cgt_calculator.exemption:,.0f}"
         if COUNTRY == "Ireland"
-        else f"${Portfolio.from_definition(PORTFOLIO, country=COUNTRY).cgt_calculator.exemption:,.0f}"
+        else f"R{Portfolio.from_definition(PORTFOLIO, country=COUNTRY).cgt_calculator.exemption:,.0f}"
     )
     country_options_json = json.dumps(
         [{"value": country, "label": COUNTRY_LABELS[country]} for country in SUPPORTED_COUNTRIES]
@@ -314,7 +314,7 @@ function renderCountrySummaries(summaries) {
         <div class="line"><span class="line-label">Annual exemption</span><span class="line-val">− ${summary.cgt_exemption}</span></div>
         <div class="line"><span class="line-label">Taxable gain (${summary.local_currency})</span><span class="line-val">${localSign(summary.taxable_local, 2)}</span></div>
         <div class="line-sep"></div>
-        <div class="line total"><span class="line-label">CGT @ ${summary.cgt_rate_pct}% (${summary.local_currency})</span><span class="line-val neg">${localSign(summary.cgt_local, 2)}</span></div>
+        ${summary.inclusion_local != null ? `<div class="line"><span class="line-label">Inclusion (${Math.round(summary.inclusion_rate*100)}%)</span><span class="line-val">${localSign(summary.inclusion_local, 2)}</span></div><div class="line"><span class="line-label">CGT (${summary.local_currency})</span><span class="line-val neg">Marginal ${Math.round(summary.marginal_rate*100)}% × ${localSign(summary.inclusion_local, 2)}</span></div>` : `<div class="line total"><span class="line-label">CGT @ ${summary.cgt_rate_pct}% (${summary.local_currency})</span><span class="line-val neg">${localSign(summary.cgt_local, 2)}</span></div>`}
         <div class="line total"><span class="line-label">CGT (USD equivalent)</span><span class="line-val neg">${usd(summary.cgt_usd, 2)}</span></div>
         <div class="line total"><span class="line-label">Decision</span><span class="line-val">${summary.sale_signal}</span></div>
       </div>
@@ -506,13 +506,16 @@ load();
                 'country': COUNTRY_LABELS.get(country, country),
                 'country_key': country,
                 'cgt_rate_pct': int(country_portfolio.cgt_calculator.rate * 100),
-                'cgt_exemption': f"€{country_portfolio.cgt_calculator.exemption:,.0f}" if country == 'Ireland' else f"${country_portfolio.cgt_calculator.exemption:,.0f}",
+                'cgt_exemption': f"€{country_portfolio.cgt_calculator.exemption:,.0f}" if country == 'Ireland' else f"R{country_portfolio.cgt_calculator.exemption:,.0f}",
                 'local_currency': totals['local_currency'],
                 'net_pnl_local': totals['net_pnl_local'],
                 'taxable_local': totals['taxable_local'],
                 'cgt_local': totals['cgt_local'],
                 'cgt_usd': totals['cgt_usd'],
                 'sale_signal': sale_signal,
+                'inclusion_local': totals.get('inclusion_local'),
+                'inclusion_rate': totals.get('inclusion_rate'),
+                'marginal_rate': totals.get('marginal_rate'),
             })
 
         return jsonify(data)

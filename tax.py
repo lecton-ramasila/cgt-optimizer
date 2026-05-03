@@ -1,13 +1,13 @@
 """Irish CGT calculation logic."""
 
-from config import CGT_EXEMPTION_EUR, CGT_RATE, COUNTRY, SA_CGT_RATE, SA_EXEMPTION_USD
+from config import CGT_EXEMPTION_EUR, CGT_RATE, COUNTRY, SA_CGT_RATE, SA_EXEMPTION_ZAR, SA_INCLUSION_RATE
 
 
 def get_cgt_params(country: str) -> tuple[float, float]:
     if country == "Ireland":
         return CGT_RATE, CGT_EXEMPTION_EUR
     elif country == "SouthAfrica":
-        return SA_CGT_RATE, SA_EXEMPTION_USD
+        return SA_CGT_RATE, SA_EXEMPTION_ZAR
     else:
         raise ValueError(f"Unsupported country: {country}")
 
@@ -27,9 +27,9 @@ class CGTCalculator:
             local_currency = "EUR"
         elif self.country == "SouthAfrica":
             net_pnl_local = net_pnl_usd / zar_usd
-            exemption_local = self.exemption / zar_usd
-            taxable_local = max(0.0, net_pnl_local - exemption_local)
-            cgt_local = taxable_local * self.rate
+            taxable_local = max(0.0, net_pnl_local - self.exemption)
+            inclusion_local = taxable_local * SA_INCLUSION_RATE
+            cgt_local = inclusion_local * self.rate
             cgt_usd = cgt_local * zar_usd
             local_currency = "ZAR"
         else:
@@ -41,4 +41,7 @@ class CGTCalculator:
             "cgt_local": round(cgt_local, 2),
             "local_currency": local_currency,
             "cgt_usd": round(cgt_usd, 2),
+            "inclusion_local": round(inclusion_local, 2) if self.country == "SouthAfrica" else None,
+            "inclusion_rate": SA_INCLUSION_RATE if self.country == "SouthAfrica" else None,
+            "marginal_rate": self.rate if self.country == "SouthAfrica" else None,
         }

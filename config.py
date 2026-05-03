@@ -29,8 +29,9 @@ COUNTRY = os.getenv("COUNTRY", "Ireland")
 CGT_RATE = _env_float("CGT_RATE", 0.33)
 CGT_EXEMPTION_EUR = _env_float("CGT_EXEMPTION_EUR", 1270.0)
 
-SA_CGT_RATE = _env_float("SA_CGT_RATE", 0.18)
-SA_EXEMPTION_USD = _env_float("SA_EXEMPTION_USD", 2500.0)
+SA_CGT_RATE = _env_float("SA_CGT_RATE", 0.45)
+SA_INCLUSION_RATE = _env_float("SA_INCLUSION_RATE", 0.40)
+SA_EXEMPTION_ZAR = _env_float("SA_EXEMPTION_ZAR", 50000.0)
 
 IBKR_COMM_RATE = _env_float("IBKR_COMM_RATE", 0.005)
 IBKR_COMM_MIN = _env_float("IBKR_COMM_MIN", 1.00)
