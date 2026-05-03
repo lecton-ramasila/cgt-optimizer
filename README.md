@@ -10,6 +10,8 @@ A single-file Python web app that fetches live stock prices and computes real-ti
 - EUR/USD live FX rate + IBKR FX conversion fee
 - One-click refresh — no server restart needed
 
+## TODO
+- Factor in `FX cost`!!!. Tax is not the only deductor.
 ## Setup
 
 ```bash
