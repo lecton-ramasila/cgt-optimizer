@@ -146,7 +146,9 @@ def create_app() -> Flask:
   <div class="kpi"><div class="kpi-label">Cost Basis</div><div class="kpi-val" id="k-cost">—</div></div>
   <div class="kpi"><div class="kpi-label">Gross PnL</div><div class="kpi-val" id="k-pnl">—</div></div>
   <div class="kpi"><div class="kpi-label">Total Broker Fees</div><div class="kpi-val" id="k-fees">—</div></div>
-  <div class="kpi"><div class="kpi-label">CGT Liability</div><div class="kpi-val neg" id="k-cgt">—</div></div>
+  <div class="kpi"><div class="kpi-label">CGT Liability (USD)</div><div class="kpi-val neg" id="k-cgt-usd">—</div></div>
+  <div class="kpi"><div class="kpi-label">CGT Liability (Local)</div><div class="kpi-val neg" id="k-cgt-local">—</div></div>
+  <div class="kpi"><div class="kpi-label">Net Cash (USD)</div><div class="kpi-val gold" id="k-net-usd">—</div></div>
   <div class="kpi"><div class="kpi-label">Net Cash (Local)</div><div class="kpi-val gold" id="k-net">—</div></div>
 </div>
 
@@ -191,19 +193,21 @@ def create_app() -> Flask:
 
     <div class="card">
       <div class="card-title">Bottom Line</div>
-      <div class="line"><span class="line-label">Gross proceeds</span><span class="line-val" id="b-gross">—</span></div>
-      <div class="line"><span class="line-label">Less: all broker fees</span><span class="line-val neg" id="b-fees">—</span></div>
-      <div class="line"><span class="line-label">Less: CGT</span><span class="line-val neg" id="b-cgt">—</span></div>
+      <div class="line total"><span class="line-label">Capital deployed (USD)</span><span class="line-val" id="b-invest-stock">—</span></div>
+      <div class="line"><span class="line-label">Capital deployed (Local)</span><span class="line-val" id="b-invest-local">—</span></div>
       <div class="line-sep"></div>
+      <div class="line"><span class="line-label">Gross proceeds</span><span class="line-val" id="b-gross">—</span></div>
+      <div class="line"><span class="line-label">Broker fees</span><span class="line-val neg" id="b-fees">—</span></div>
+      <div class="line"><span class="line-label">CGT (USD / Local)</span><span class="line-val neg" id="b-cgt">—</span></div>
       <div class="line total"><span class="line-label">Net cash (USD)</span><span class="line-val gold" id="b-net-usd">—</span></div>
       <div class="line total"><span class="line-label">Net cash (Local)</span><span class="line-val gold" id="b-net-eur">—</span></div>
-      <div class="line"><span class="line-label">Invested (stock ccy)</span><span class="line-val" id="b-invest-stock">—</span></div>
-      <div class="line"><span class="line-label">Invested (local ccy)</span><span class="line-val" id="b-invest-local">—</span></div>
-      <div class="line"><span class="line-label">Upfront investment fees</span><span class="line-val" id="b-upfront-fees">—</span></div>
-      <div class="line"><span class="line-label">Initial stock cost</span><span class="line-val" id="b-initial-stock-cost">—</span></div>
-      <div class="line"><span class="line-label">Initial cost + fees</span><span class="line-val" id="b-initial-plus-fees">—</span></div>
-      <div class="line"><span class="line-label">(Initial+fees) - (today-admin-cgt)</span><span class="line-val" id="b-current-vs-initial">—</span></div>
-      <div class="line total"><span class="line-label">Sale signal</span><span class="line-val" id="b-sale-signal">—</span></div>
+      <div class="line-sep"></div>
+      <div class="line total"><span class="line-label">Profit / Loss (USD)</span><span class="line-val" id="b-pnl-usd-story">—</span></div>
+      <div class="line total"><span class="line-label">Profit / Loss (Local)</span><span class="line-val" id="b-pnl-local-story">—</span></div>
+      <div class="line"><span class="line-label">Price movement contribution</span><span class="line-val" id="b-attr-price">—</span></div>
+      <div class="line"><span class="line-label">Costs contribution (fees+tax)</span><span class="line-val" id="b-attr-cost">—</span></div>
+      <div class="line"><span class="line-label">FX contribution</span><span class="line-val" id="b-attr-fx">Requires entry FX history</span></div>
+      <div class="line total"><span class="line-label">Decision</span><span class="line-val" id="b-sale-signal">—</span></div>
     </div>
 
   </div>
@@ -320,7 +324,7 @@ function renderCountrySummaries(summaries) {
 function renderNoCountrySelected() {
   $('as-of').textContent = 'No country selected';
   $('fx-rate').textContent = '—';
-  ['k-val','k-cost','k-pnl','k-fees','k-cgt','k-net','b-gross','b-fees','b-cgt','b-net-usd','b-net-eur','b-invest-stock','b-invest-local','b-upfront-fees','b-current-vs-initial','b-initial-stock-cost','b-initial-plus-fees','b-sale-signal'].forEach(id => { if($(id)) $(id).textContent='No country selected'; });
+  ['k-val','k-cost','k-pnl','k-fees','k-cgt-usd','k-cgt-local','k-net-usd','k-net','b-gross','b-fees','b-cgt','b-net-usd','b-net-eur','b-invest-stock','b-invest-local','b-pnl-usd-story','b-pnl-local-story','b-attr-price','b-attr-cost','b-attr-fx','b-sale-signal'].forEach(id => { if($(id)) $(id).textContent='No country selected'; });
   $('tbody').innerHTML='';
   $('tfoot').innerHTML='';
   $('country-summaries').innerHTML='';
@@ -368,7 +372,9 @@ function render(d) {
   $('k-cost').textContent = usd(t.cost_usd);
   $('k-pnl').innerHTML    = `<span class="${cls(t.pnl_usd)}">${signed(t.pnl_usd, usd)}</span>`;
   $('k-fees').textContent = usd(t.total_fees + t.fx_fee, 2);
-  $('k-cgt').textContent  = usd(t.cgt_usd, 2);
+  $('k-cgt-usd').textContent  = usd(t.cgt_usd, 2);
+  $('k-cgt-local').textContent = displayFmt(t.cgt_local, 2);
+  $('k-net-usd').textContent = usd(t.net_cash_usd, 2);
   $('k-net').textContent  = displayFmt(displayNetCash, 2);
 
   const tbody = $('tbody');
@@ -422,20 +428,24 @@ function render(d) {
   // Cards — bottom line
   $('b-gross').textContent  = usd(t.value_usd);
   $('b-fees').textContent   = '− ' + usd(t.total_fees + t.fx_fee, 2);
-  $('b-cgt').textContent    = '− ' + usd(t.cgt_usd);
-  $('b-net-usd').textContent = usd(t.net_cash_usd);
+  $('b-cgt').textContent    = `− ${usd(t.cgt_usd, 2)} / ${displayFmt(t.cgt_local, 2)}`;
+  $('b-net-usd').textContent = usd(t.net_cash_usd, 2);
   $('b-net-eur').textContent = displayFmt(displayNetCash, 2);
 
   const upfrontFees = t.upfront_fees_usd || 0;
   const adminFees = t.total_fees + t.fx_fee;
-  const grossDeltaUsd = (t.cost_usd + upfrontFees) - (t.value_usd - adminFees - t.cgt_usd);
-  const signal = grossDeltaUsd < 0 ? `HOLD` : grossDeltaUsd === 0 ? 'STABLE' : `ELIGIBLE FOR SALE in ${d.selected_countries?.[0] || 'selected country'}`;
+  const profitUsd = t.net_cash_usd - (t.cost_usd + upfrontFees);
+  const profitLocal = displayNetCash - investedLocal;
+  const priceContribution = t.pnl_usd;
+  const costContribution = -(adminFees + t.cgt_usd);
+  const signal = profitUsd > 0 ? `ELIGIBLE FOR SALE in ${d.selected_countries?.[0] || 'selected country'}` : (profitUsd === 0 ? 'STABLE' : 'HOLD');
   $('b-invest-stock').textContent = usd(t.cost_usd, 2);
   $('b-invest-local').textContent = displayFmt(investedLocal, 2);
-  $('b-upfront-fees').textContent = usd(upfrontFees, 2);
-  $('b-current-vs-initial').textContent = usd(grossDeltaUsd, 2);
-  $('b-initial-stock-cost').textContent = usd(t.cost_usd, 2);
-  $('b-initial-plus-fees').textContent = usd(t.cost_usd + upfrontFees, 2);
+  $('b-pnl-usd-story').textContent = signed(profitUsd, v => usd(v, 2));
+  $('b-pnl-local-story').textContent = signed(profitLocal, v => displayFmt(v, 2));
+  $('b-attr-price').textContent = signed(priceContribution, v => usd(v, 2));
+  $('b-attr-cost').textContent = signed(costContribution, v => usd(v, 2));
+  $('b-attr-fx').textContent = 'Requires entry FX history';
   $('b-sale-signal').textContent = signal;
 
   renderCountrySummaries(d.country_summaries);
