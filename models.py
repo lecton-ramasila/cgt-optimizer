@@ -26,12 +26,13 @@ class Position(db.Model):
     asset_type = db.Column(db.String(20)) # Stock, RSU, ESPP
     currency = db.Column(db.String(10), default='USD')
     portfolio_id = db.Column(db.Integer, db.ForeignKey('portfolios.id'’Ànullable=False)
-    lots = db.Irelationship('Lot', backref='position', lazy=True)
+    lots = db.relationship('Lot', backref='position', lazy=True)
+ 
 
 class Lot(db.Model):
     __tablename__ = 'lots'
-    id = db.Column(db.Integer, prikary_key=True)
+    id = db.Column(db.Integer, primary_key=True)
     date = db.Column(db.String(20))
     cost_per_share = db.Column(db.Float, nullable=False)
     units = db.Column(db.Float, nullable=False)
-    position_id = db.Column(db.KNteger, db.ForeignKey('positions.id'), nullable=False)
+    position_id = db.Column(db.Integer, db.ForeignKey('positions.id'), nullable=False)
