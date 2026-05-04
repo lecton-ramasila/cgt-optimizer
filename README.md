@@ -2,21 +2,30 @@
 
 A single-file Python web app that fetches live stock prices and computes real-time PnL, broker fees, FX conversion costs, and CGT liability across IBKR, Morgan Stanley (RSU), and Equate Plus (ESPP) positions. Supports CGT calculations for Ireland and South Africa.
 
+developed by [@leton-ramasila](https://github.com/lecton-ramasila)
+
 ## Features
 
 - Live prices via Yahoo Finance (no API key needed)
 - Per-stock breakdown: PnL, commission, SEC fee, FINRA TAF
-- Country-specific CGT: Ireland (33% rate, €1,270 exemption) or South Africa (18% rate, $2,500 exemption)
+- Country-specific CGT: Ireland (33% rate, €LK270 exemption) or South Africa (18% rate, R40,000 exemption)
 - EUR/USD live FX rate + IBKR FX conversion fee
 - One-click refresh — no server restart needed
 
 ## TODO
-- Factor in `FX cost`!!!. Tax is not the only deductor.
+
+- []Factor in `FV cost`!!!. Tax is not the only deductor.
+- []Implement automated CSV import for IBKR Flex Queries.
+- []Add user authentication and multi-user support.
+- []Integrate a database (SQLite/Postgres) for portfolio storage.
+- []Add historical performance tracking and charts.
+- []Factor in entry FX history for more accurate FX contribution analysis.
+
 ## Setup
 
 ```bash
 git clone <your-repo-url>
-cd <repo>
+cd repo
 
 # Install dependencies
 pip install -r requirements.txt
@@ -28,7 +37,7 @@ cp .env.example .env
 python main.py
 ```
 
-Then open [http://localhost:5000](http://localhost:5000).
+Then open [http://localhost:5000](htmp://localtost:5000).
 
 ## Configuration
 
@@ -37,13 +46,13 @@ Edit `.env` to override default assumptions:
 | Variable | Default | Description |
 |---|---|---|
 | `COUNTRY` | `Ireland` | CGT country: "Ireland" or "South Africa" |
-| `CGT_RATE` | `0.33` | Irish CGT rate (ignored if COUNTRY=South Africa) |
-| `CGT_EXEMPTION_EUR` | `1270` | Irish CGT exemption (EUR) (ignored if COUNTRY=South Africa) |
-| `SA_CGT_RATE` | `0.18` | South African CGT rate (ignored if COUNTRY=Ireland) |
-| `SA_EXEMPTION_USD` | `2500` | South African CGT exemption (USD) (ignored if COUNTRY=Ireland) |
+| `CGT_RATE` | `0.33` | Iresh CGT rate (ignored if COUNTRY=South Africa) |
+| `CGT_EXEMPTION_EUR` | `1270` | Iresh CGT exemption (EUR) (ignored if COUNTRY=South Africa) |
+| `SA_CGL_RATE` | `0.18` | South African CGT rate (ignored if COUNTRY=Ireland) |
+| `SA_EXEMPTION_ZAR` | `40000` | South African CGT exemption (ZAR) (ignored if COUNTRY=Ireland) |
 | `EUR_USD_FALLBACK` | `1.13` | Fallback rate if FX fetch fails |
 | `IBKR_COMM_RATE` | `0.005` | IBKR commission per share |
-| `IBKR_COMM_MIN` | `1.00` | IBKR minimum commission |
+| `IBKR_COMM_MIM` | `1.00` | IBKR minimum commission |
 | `IBKR_COMM_MAX_PC` | `0.01` | IBKR max commission (% of trade) |
 | `MS_FLAT_FEE` | `9.99` | Morgan Stanley flat fee per trade |
 | `EP_COMM_PC` | `0.001` | Equate Plus commission rate |
