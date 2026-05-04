@@ -1,174 +1,166 @@
-"""Portfolio aggregation and per-position profit/loss calculation."""
-
-from dataclasses import dataclass, field
-from typing import Iterable
-
-from fees import FeeCalculator
-from tax import CGTCalculator, get_cgt_params
-from config import COUNTRY
-
-
-@dataclass(frozen=True)
-class Lot:
-    date: str
-    cost_per_share: float
-    units: float
-
-
-@dataclass
-class Position:
-    ticker: str
-    name: str
-    platform: str
-    asset_type: str
-    lots: list[Lot]
-    currency: str = "USD"
-    price: float | None = None
-    fee_calculator: FeeCalculator = field(default_factory=FeeCalculator)
-
-    @property
-    def total_units(self) -> float:
-        return sum(lot.units for lot in self.lots)
-
-    @property
-    def total_cost(self) -> float:
-        return sum(lot.cost_per_share * lot.units for lot in self.lots)
-
-    @property
-    def market_value(self) -> float | None:
-        if self.price is None:
-            return None
-        return self.price * self.total_units
-
-    @property
-    def pnl(self) -> float | None:
-        if self.market_value is None:
-            return None
-        return self.market_value - self.total_cost
-
-    @property
-    def pnl_pct(self) -> float | None:
-        if self.pnl is None or self.total_cost == 0:
-            return None
-        return self.pnl / self.total_cost
-
-    def fee_summary(self) -> dict[str, float | None]:
-        if self.market_value is None:
-            return {"comm": None, "sec": None, "finra": None, "total_fees": None}
-
-        fees = self.fee_calculator.total_fees(self.platform, self.total_units, self.market_value)
-        return {
-            "comm": round(fees["comm"], 2),
-            "sec": round(fees["sec"], 4),
-            "finra": round(fees["finra"], 4),
-            "total_fees": round(fees["total_fees"], 2),
-        }
-
-    @property
-    def net_pnl(self) -> float | None:
-        if self.pnl is None:
-            return None
-        fees = self.fee_summary()
-        if fees["total_fees"] is None:
-            return None
-        return round(self.pnl - fees["total_fees"], 2)
-
-    def to_dict(self) -> dict[str, float | str | None]:
-        fees = self.fee_summary()
-        return {
-            "ticker": self.ticker,
-            "name": self.name,
-            "platform": self.platform,
-            "type": self.asset_type,
-            "currency": self.currency,
-            "units": round(self.total_units, 4),
-            "cost_usd": round(self.total_cost, 2),
-            "price": round(self.price, 2) if self.price is not None else None,
-            "value_usd": round(self.market_value, 2) if self.market_value is not None else None,
-            "pnl_usd": round(self.pnl, 2) if self.pnl is not None else None,
-            "pnl_pct": round(self.pnl_pct * 100, 2) if self.pnl_pct is not None else None,
-            "comm": fees["comm"],
-            "sec": fees["sec"],
-            "finra": fees["finra"],
-            "total_fees": fees["total_fees"],
-            "net_pnl_usd": self.net_pnl,
-        }
-
-
-class Portfolio:
-    def __init__(self, positions: Iterable[Position], fx_ticker: str = "EURUSD=X", country: str = COUNTRY) -> None:
-        self.positions = list(positions)
-        self.fx_ticker = fx_ticker
-        self.country = country
-        rate, exemption = get_cgt_params(country)
-        self.cgt_calculator = CGTCalculator(rate, exemption, country)
-        self.fee_calculator = FeeCalculator()
-
-    @classmethod
-    def from_definition(cls, portfolio_definition: dict[str, dict], fx_ticker: str = "EURUSD=X", country: str = COUNTRY) -> "Portfolio":
-        positions = []
-        for ticker, info in portfolio_definition.items():
-            lots = [Lot(date, cost, units) for date, cost, units in info["lots"]]
-            positions.append(
-                Position(
-                    ticker=ticker,
-                    name=info["name"],
-                    platform=info["platform"],
-                    asset_type=info["type"],
-                    lots=lots,
-                    currency=info.get("currency", "USD"),
-                )
-            )
-        return cls(positions, fx_ticker=fx_ticker, country=country)
-
-    def update_prices(self, prices: dict[str, float | None]) -> None:
-        for position in self.positions:
-            position.price = prices.get(position.ticker)
-
-    def filtered(self, tickers: list[str]) -> "Portfolio":
-        filtered_positions = [position for position in self.positions if position.ticker in tickers]
-        return Portfolio(filtered_positions, fx_ticker=self.fx_ticker, country=self.country)
-
-    def as_dict(self, eur_usd: float, zar_usd: float = 0.054) -> dict[str, object]:
-        stocks = [position.to_dict() for position in self.positions]
-        valid_stocks = [stock for stock in stocks if stock["value_usd"] is not None]
-
-        total_cost = sum(stock["cost_usd"] for stock in valid_stocks)
-        total_value = sum(stock["value_usd"] for stock in valid_stocks)
-        total_fees = sum(stock["total_fees"] for stock in valid_stocks)
-        total_pnl = sum(stock["pnl_usd"] for stock in valid_stocks)
-
-        ibkr_value = sum(stock["value_usd"] for stock in valid_stocks if stock["platform"] == "IBKR")
-        fx_fee = self.fee_calculator.fx_fee(ibkr_value)
-        cgt_info = self.cgt_calculator.compute(total_pnl, eur_usd, zar_usd)
-
-        net_cash_usd = total_value - total_fees - fx_fee - cgt_info["cgt_usd"]
-        net_cash_local = net_cash_usd / eur_usd if cgt_info["local_currency"] == "EUR" else net_cash_usd / zar_usd
-
-        return {
-            "stocks": stocks,
-            "eur_usd": round(eur_usd, 4),
-            "as_of": datetime_now(),
-            "totals": {
-                "cost_usd": round(total_cost, 2),
-                "value_usd": round(total_value, 2),
-                "pnl_usd": round(total_pnl, 2),
-                "total_fees": round(total_fees, 2),
-                "fx_fee": round(fx_fee, 2),
-                "net_pnl_local": cgt_info["net_pnl_local"],
-                "taxable_local": cgt_info["taxable_local"],
-                "cgt_local": cgt_info["cgt_local"],
-                "local_currency": cgt_info["local_currency"],
-                "cgt_usd": cgt_info["cgt_usd"],
-                "inclusion_local": cgt_info.get("inclusion_local"),
-                "inclusion_rate": cgt_info.get("inclusion_rate"),
-                "marginal_rate": cgt_info.get("marginal_rate"),
-                "net_cash_usd": round(net_cash_usd, 2),
-                "net_cash_local": round(net_cash_local, 2),
-            },
-        }
-
-
-def datetime_now() -> str:
-    from datetime import datetime
-    return datetime.now().strftime("%d %b %Y  %H:%M:%S")
+IiIiUG9ydGZvbGlvIGFnZ3JlZ2F0aW9uIGFuZCBwZXItcG9zaXRpb24gcHJv
+Zml0L2xvc3MgY2FsY3VsYXRpb24uIiIiCgpmcm9tIGRhdGFjbGFzc2VzIGlt
+cG9ydCBkYXRhY2xhc3MsIGZpZWxkCmZyb20gdHlwaW5nIGltcG9ydCBJdGVy
+YWJsZQoKZnJvbSBmZWVzIGltcG9ydCBGZWVDYWxjdWxhdG9yCmZyb20gdGF4
+IGltcG9ydCBDR1RDYWxjdWxhdG9yLCBnZXRfY2d0X3BhcmFtcwpmcm9tIGNv
+bmZpZyBpbXBvcnQgQ09VTlRSWQoKCkBkYXRhY2xhc3MoZnJvemVuPVRydWUp
+CmNsYXNzIExvdDoKICAgIGRhdGU6IHN0cgogICAgY29zdF9wZXJfc2hhcmU6
+IGZsb2F0CiAgICB1bml0czogZmxvYXQKCgpAZGF0YWNsYXNzCmNsYXNzIFBv
+c2l0aW9uOgogICAgdGlja2VyOiBzdHIKICAgIG5hbWU6IHN0cgogICAgcGxh
+dGZvcm06IHN0cgogICAgYXNzZXRfdHlwZTogc3RyCiAgICBsb3RzOiBsaXN0
+W0xvdF0KICAgIGN1cnJlbmN5OiBzdHIgPSAiVVNEIgogICAgcHJpY2U6IGZs
+b2F0IHwgTm9uZSA9IE5vbmUKICAgIGZlZV9jYWxjdWxhdG9yOiBGZWVDYWxj
+dWxhdG9yID0gZmllbGQoZGVmYXVsdF9mYWN0b3J5PUZlZUNhbGN1bGF0b3Ip
+CgogICAgQHByb3BlcnR5CiAgICBkZWYgdG90YWxfdW5pdHMoc2VsZikgLT4g
+ZmxvYXQ6CiAgICAgICAgcmV0dXJuIHN1bShsb3QudW5pdHMgZm9yIGxvdCBp
+biBzZWxmLmxvdHMpCgogICAgQHByb3BlcnR5CiAgICBkZWYgdG90YWxfY29z
+dChzZWxmKSAtPiBmbG9hdDoKICAgICAgICByZXR1cm4gc3VtKGxvdC5jb3N0
+X3Blcl9zaGFyZSAqIGxvdC51bml0cyBmb3IgbG90IGluIHNlbGYubG90cykK
+CiAgICBAcHJvcGVydHkKICAgIGRlZiBtYXJrZXRfdmFsdWUoc2VsZikgLT4g
+ZmxvYXQgfCBOb25lOgogICAgICAgIGlmIHNlbGYucHJpY2UgaXMgTm9uZToK
+ICAgICAgICAgICAgcmV0dXJuIE5vbmUKICAgICAgICByZXR1cm4gc2VsZi5w
+cmljZSAqIHNlbGYudG90YWxfdW5pdHMKCiAgICBAcHJvcGVydHkKICAgIGRl
+ZiBwbmwoc2VsZikgLT4gZmxvYXQgfCBOb25lOgogICAgICAgIGlmIHNlbGYu
+bWFya2V0X3ZhbHVlIGlzIE5vbmU6CiAgICAgICAgICAgIHJldHVybiBOb25l
+CiAgICAgICAgcmV0dXJuIHNlbGYubWFya2V0X3ZhbHVlIC0gc2VsZi50b3Rh
+bF9jb3N0CgogICAgQHByb3BlcnR5CiAgICBkZWYgcG5sX3BjdChzZWxmKSAt
+PiBmbG9hdCB8IE5vbmU6CiAgICAgICAgaWYgc2VsZi5wbmwgaXMgTm9uZSBv
+ciBzZWxmLnRvdGFsX2Nvc3QgPT0gMDoKICAgICAgICAgICAgcmV0dXJuIE5v
+bmUKICAgICAgICByZXR1cm4gc2VsZi5wbmwgLyBzZWxmLnRvdGFsX2Nvc3QK
+CiAgICBkZWYgZmVlX3N1bW1hcnkoc2VsZikgLT4gZGljdFtzdHIsIGZsb2F0
+IHwgTm9uZV06CiAgICAgICAgaWYgc2VsZi5tYXJrZXRfdmFsdWUgaXMgTm9u
+ZToKICAgICAgICAgICAgcmV0dXJuIHsiY29tbSI6IE5vbmUsICJzZWMiOiBO
+b25lLCAiZmlucmEiOiBOb25lLCAidG90YWxfZmVlcyI6IE5vbmV9CgogICAg
+ICAgIGZlZXMgPSBzZWxmLmZlZV9jYWxjdWxhdG9yLnRvdGFsX2ZlZXMoc2Vs
+Zi5wbGF0Zm9ybSwgc2VsZi50b3RhbF91bml0cywgc2VsZi5tYXJrZXRfdmFs
+dWUpCiAgICAgICAgcmV0dXJuIHsKICAgICAgICAgICAgImNvbW0iOiByb3Vu
+ZChmZWVzWyJjb21tIl0sIDIpLAogICAgICAgICAgICAic2VjIjogcm91bmQo
+ZmVlc1sic2VjIl0sIDQpLAogICAgICAgICAgICAiZmlucmEiOiByb3VuZChm
+ZWVzWyJmaW5yYSJdLCA0KSwKICAgICAgICAgICAgInRvdGFsX2ZlZXMiOiBy
+b3VuZChmZWVzWyJ0b3RhbF9mZWVzIl0sIDIpLAogICAgICAgIH0KCiAgICBA
+cHJvcGVydHkKICAgIGRlZiBuZXRfcG5sKHNlbGYpIC0+IGZsb2F0IHwgTm9u
+ZToKICAgICAgICBpZiBzZWxmLnBubCBpcyBOb25lOgogICAgICAgICAgICBy
+ZXR1cm4gTm9uZQogICAgICAgIGZlZXMgPSBzZWxmLmZlZV9zdW1hcnkoKQog
+ICAgICAgIGlmIGZlZXNbInRvdGFsX2ZlZXMiXSBpcyBOb25lOgogICAgICAg
+ICAgICByZXR1cm4gTm9uZQogICAgICAgIHJldHVybiByb3VuZChzZWxmLnBu
+bCAtIGZlZXNbInRvdGFsX2ZlZXMiXSwgMikKCiAgICBkZWYgdG9_ZGljdChz
+ZWxmKSAtPiBkaWN0W3N0ciwgZmxvYXQgfCBzdHIgfCBOb25lXToKICAgICAg
+ICBmZWVzID0gc2VsZi5mZWVfc3VtbWFyeSgpCiAgICAgICAgcmV0dXJuIHsK
+ICAgICAgICAgICAgInRpY2tlciI6IHNlbGYudGlja2VyLAogICAgICAgICAg
+ICAibmFtZSI6IHNlbGYubmFtZSwKICAgICAgICAgICAgInBsYXRmb3JtIjog
+c2VsZi5wbGF0Zm9ybSwKICAgICAgICAgICAgInR5cGUiOiBzZWxmLmFzc2V0
+X3R5cGUsCiAgICAgICAgICAgICJjdXJyZW5jeSI6IHNlbGYuY3VycmVuY3ks
+CiAgICAgICAgICAgICJ1bml0cyI6IHJvdW5kKHNlbGYudG90YWxfdW5pdHMs
+IDQpLAogICAgICAgICAgICAiY29zdF91c2QiOiByb3VuZChzZWxmLnRvdGFs
+X2Nvc3QsIDIpLAogICAgICAgICAgICAicHJpY2UiOiByb3VuZChzZWxmLnBy
+aWNlLCAyKSBpZiBzZWxmLnByaWNlIGlzIG5vdCBOb25lIGVsc2UgTm9uZSwK
+ICAgICAgICAgICAgInZhbHVlX3VzZCI6IHJvdW5kKHNlbGYubWFya2V0X3Zh
+bHVlLCAyKSBpZiBzZWxmLm1hcmtldF92YWx1ZSBpcyBub3QgTm9uZSBlbHNl
+IE5vbmUsCiAgICAgICAgICAgICJwbmxfdXNkIjogcm91bmQoc2VsZi5wbmws
+IDIpIGlmIHNlbGYucG5sIGlzIG5vdCBOb25lIGVsc2UgTm9uZSwKICAgICAg
+ICAgICAgInBubF9wY3QiOiByb3VuZChzZWxmLnBubF9wY3QgKiAxMDAsIDIp
+IGlmIHNlbGYucG5sX3BjdCBpcyBub3QgTm9uZSBlbHNlIE5vbmUsCiAgICAg
+ICAgICAgICJjb21tIjogZmVlc1siY29tbSJdLAogICAgICAgICAgICAic2Vj
+IjogZmVlc1sic2VjIl0sCiAgICAgICAgICAgICJmaW5yYSI6IGZlZXNbImZp
+bmJhIl0sCiAgICAgICAgICAgICJ0b3RhbF9mZWVzIjogZmVlc1sidG90YWxf
+ZmVlcyJdLAogICAgICAgICAgICAibmV0X3BubF91c2QiOiBzZWxmLm5ldF9w
+bmwsCiAgICAgICAgfQoKCmNsYXNzIFBvcnRmb2xpbzoKICAgIGRlZiBfX2lu
+aXRfXyhzZWxmLCBwb3NpdGlvbnM6IEl0ZXJhYmxlW1Bvc2l0aW9uXSwgZnhf
+dGlja2VyOiBzdHIgPSAiRVVRVVNEPVgiLCBjb3VudHJ5OiBzdHIgPSBDT1VO
+VFJZKSAtPiBOb25lOgogICAgICAgIHNlbGYucG9zaXRpb25zID0gbGlzdChw
+b3NpdGlvbnMpCiAgICAgICAgc2VsZi5meF90aWNrZXIgPSBmeF90aWNrZXIK
+ICAgICAgICBzZWxmLmNvdW50cnkgPSBjb3VudHJ5CiAgICAgICAgcmF0ZSwg
+ZXhlbXB0aW9uID0gZ2V0X2NndF9wYXJhbXMoY291bnRyeSkKICAgICAgICBz
+ZWxmLmNndF9jYWxjdWxhdG9yID0gQ0dUQ2FsY3VsYXRvcihyYXRlLCBleGVt
+cHRpb24sIGNvdW50cnkpCiAgICAgICAgc2VsZi5mZWVfY2FsY3VsYXRvciA9
+IEZlZUNhbGN1bGF0b3IoKQoKICAgIEBjbGFzc21ldGhvZAogICAgZGVmIGZy
+b21fZGVmaW5pdGlvbihjbHMsIHBvcnRmb2xpb19kZWZpbml0aW9uOiBkaWN0
+W3N0ciwgZGljdF0sIGZ4X3RpY2tlcjogc3RyID0gIkVVUlVTRD1YIiwgY291
+bnRyeTogc3RyID0gQ09VTlRSWSkgLT4gIlBvcnRmb2xpbyI6CiAgICAgICAg
+cG9zaXRpb25zID0gW10KICAgICAgICBmb3IgdGlja2VyLCBpbmZvIGluIHBv
+cnRmb2xpb19kZWZpbml0aW9uLml0ZW1zKCk6CiAgICAgICAgICAgIGxvdHMg
+PSBbTG90KGRhdGUsIGNvc3QsIHVuaXRzKSBmb3IgZGF0ZSwgY29zdCwgdW5p
+dHMgaW4gaW5mb1sibG90cyJdXQogICAgICAgICAgICBwb3NpdGlvbnMuYXBw
+ZW5kKAogICAgICAgICAgICAgICAgUG9zaXRpb24oCiAgICAgICAgICAgICAg
+ICAgICB0aWNrZXI9dGlja2VyLAogICAgICAgICAgICAgICAgICAgIG5hbWU9
+aW5mb1sibmFtZSJdLAogICAgICAgICAgICAgICAgICAgIHBsYXRmb3JtPWlu
+Zm9bInBsYXRmb3JtIl0sCiAgICAgICAgICAgICAgICAgICAgYXNzZXRfdHlw
+ZT1pbmZvWyJ0eXBlIl0sCiAgICAgICAgICAgICAgICAgICAgbG90cz1sb3Rz
+LAogICAgICAgICAgICAgICAgICAgIGN1cnJlbmN5PWluZm8uZ2V0KCJjdXJy
+ZW5jeSIsICJVU0QiKQogICAgICAgICAgICAgICAgKQogICAgICAgICAgICAp
+CiAgICAgICAgcmV0dXJuIGNscyhwb3NpdGlvbnMsIGZ4X3RpY2tlcj1meF90
+aWNrZXIsIGNvdW50cnk9Y291bnRyeSkKCiAgICBAY2xhc3NtZXRob2QKICAg
+IGRlZiBmcm9tX2RiKGNscywgcG9ydGZvbGlvX2lkOiBpbnQsIGZ4X3RpY2tl
+cjogc3RyID0gIkVVUlVTRD1YIikgLT4gIlBvcnRmb2xpbyI6CiAgICAgICAg
+ZnJvbSBtb2RlbHMgaW1wb3J0IFBvcnRmb2lvIGFzIERCUG9ydGZvbGlvCiAg
+ICAgICAgZGJfcG9ydGZvbGlvID0IERCUG9ydGZvbGlvLnF1ZXJ5LmdldChw
+b3J0Zm9saW9faWQpCiAgICAgICAgaWYgbm90IGRiX3BvcnRmb2xpbzoKICAg
+ICAgICAgICAgcmFpc2UgVmFsdWVFcnJvcihmIlBvcnRmb2xpbyB7cG9ydGZv
+bGlvX2lkfSBub3QgZm91bmQiKQogICAgICAgIAogICAgICAgIHBvc2l0aW9u
+cyA9IFtdCiAgICAgICAgZm9yIGRiX3BvcyBpbiBkYl9wb3J0Zm9saW8ucG9z
+aXRpb25zOgogICAgICAgICAgICBsb3RzID0gW0xvdChsLmRhdGUsIGwuY29z
+dF9wZXJfc2hhcmUsIGwudW5pdHMpIGZvciBsIGluIGRiX3Bvcy5sb3RzXQog
+ICAgICAgICAgICBwb3NpdGlvbnMuYXBwZW5kKFBvc2l0aW9uKAogICAgICAg
+ICAgICAgICAgdGlja2VyPWRiX3Bvcy50aWNrZXIsCiAgICAgICAgICAgICAg
+ICBuYW1lPWRiX3Bvcy5uYW1lLAogICAgICAgICAgICAgICAgcGxhdGZvcm09
+dGJfcG9zLnBsYXRmb3JtLAogICAgICAgICAgICAgICAgYXNzZXRfdHlwZT1k
+Yl9wb3MuYXNzZXRfdHlwZSwKICAgICAgICAgICAgICAgIGxvdHM9bG90cywK
+ICAgICAgICAgICAgICAgIGN1cnJlbmN5PWRiX3Bvcy5jdXJyZW5jeQogICAg
+ICAgICAgICApKQogICAgICAgIHJldHVybiBjbHMocG9zaXRpb25zLCBmeF90
+aWNrZXI9ZnhfdGlja2VyLCBjb3VudHJ5PWRiX3BvcnRmb2xpby5jb3VudHJ5
+KQoKICAgIGRlZiB1cGRhdGVfcHJpY2VzKHNlbGYsIHByaWNlczogZGljdFtz
+dHIsIGZsb2F0IHwgTm9uZV0pIC0+IE5vbmU6CiAgICAgICAgZm9yIHBvc2l0
+aW9uIGluIHNlbGYucG9zaXRpb25zOgogICAgICAgICAgICBwb3NpdGlvbi5w
+cmljZSA9IHByaWNlcy5nZXQocG9zaXRpb24udGlja2VyKQoKICAgIGRlZiBm
+aWx0ZXJlZChzZWxmLCB0aWNrZXJzOiBsaXN0W3N0cl0pIC0+ICJQb3J0Zm9s
+aW8iOgogICAgICAgIGZpbHRlcmVkX3Bvc2l0aW9ucyA9IFtwb3NpdGlvbiBm
+b3IgcG9zaXRpb24gaW4gc2VsZi5wb3NpdGlvbnMgaWYgcG9zaXRpb24udGlj
+a2VyIGluIHRpY2tlcnNdCiAgICAgICAgcmV0dXJuIFBvcnRmb2xpbyhmaWx0
+ZXJlZF9wb3NpdGlvbnMsIGZ4X3RpY2tlcj1zZWxmLmZ4X3RpY2tlciwgY291
+bnRyeT1zZWxmLmNvdW50cnkpCgogICAgZGVmIGFzX2RpY3Qoc2VsZiwgZXVy
+X3VzZDogZmxvYXQsIHphcl91c2Q6IGZsb2F0ID0gMC4wNTQpIC0+IGRpY3Rb
+c3RyLCBvYmplY3RdOgogICAgICAgIHN0b2NrcyA9IFtwb3NpdGlvbi50b19k
+aWN0KCkgZm9yIHBvc2l0aW9uIGluIHNlbGYucG9zaXRpb25zXQogICAgICAg
+IHZhbGlkX3N0b2NrcyA9IFtzdG9jayBmb3Igc3RvY2sgaW4gc3RvY2tzIGlm
+IHN0b2NrWyJ2YWx1ZV91c2QiXSBpcyBub3QgTm9uZV0KCiAgICAgICAgdG90
+YWxfY29zdCA9IHN1bShzdG9ja1siY29zdF91c2QiXSBmb3Igc3RvY2sgaW4g
+dmFsaWRfc3RvY2tzKQogICAgICAgIHRvdGFsX3ZhbHVlID0gc3VtKHN0b2Nr
+WyJ2YWx1ZV91c2QiXSBmb3Igc3RvY2sgaW4gdmFsaWRfc3RvY2tzKQogICAg
+ICAgIHRvdGFsX2ZlZXMgPSBzdW0oc3RvY2tbInRvdGFsX2ZlZXMiXSBmb3Ig
+c3RvY2sgaW4gdmFsaWRfc3RvY2tzKQogICAgICAgIHRvdGFsX3BubFA9IHN1
+bShzdG9ja1sicG5sX3VzZCJdIGZvciBzdG9jayBpbiB2YWxpZF9zdG9ja3Mp
+CgogICAgICAgIGlia3JfdmFsdWUgPSBzdW0oc3RvY2tbInZhbHVlX3VzZCJd
+IGZvciBzdG9jayBpbiB2YWxpZF9zdG9ja3MgaWYgc3RvY2tbInBsYXRmb3Jt
+Il0gPT0gIklCS1IiKQogICAgICAgIGZ4X2ZlZSA9IHNlbGYuZmVlX2NhbGN1
+bGF0b3IuZnhfZmVlKGlia3JfdmFsdWUpCiAgICAgICAgY2d0X2luZm8gPSBz
+ZWxmLmNndF9jYWxjdWxhdG9yLmNvbXB1dGUodG90YWxfcG5sLCBldXJfdXNk
+LCB6YXJfdXNkKQoKICAgICAgICBuZXRfY2FzaF91c2QgPSB0b3RhbF92YWx1
+ZSAtIHRvdGFsX2ZlZXMgLSBmeF9mZWUgLSBjZ3RfaW5mb1siY2d0X3VzZCJd
+CiAgICAgICAgbmV0X2Nhc2hfbG9jYWwgPSBuZXRfY2FzaF91c2QgLyBldXJf
+dXNkIGlmIGNndF9pbmZvbCJsb2NhbF9jdXJyZW5jeSJ0ID09ICJFVVIiIGVs
+c2UgbmV0X2Nhc2hfdXNkIC8gemFyX3VzZAoKICAgICAgICByZXR1cm4gewog
+ICAgICAgICAgICAic3RvY2tzIjogc3RvY2tzLAogICAgICAgICAgICAiZXVy
+X3VzZCI6IHJvdW5kKGV1cl91c2QsIDQpLAogICAgICAgICAgICAiYXNfb2Yi
+OiBkYXRldGltZV9ub3coKSwKICAgICAgICAgICAgInRvdGFscyI6IHsKICAg
+ICAgICAgICAgICAgICJjb3N0X3VzZCI6IHJvdW5kKHRvdGFsX2Nvc3QsIDIp
+LAogICAgICAgICAgICAgICAgInZhbHVlX3VzZCI6IHJvdW5kKHRvdGFsX3Zh
+bHVlLCAyKSwKICAgICAgICAgICAgICAgICJwbmxfdXNkIjogcm91bmQodG90
+YWxfcG5sLCAyKSwKICAgICAgICAgICAgICAgICJ0b3RhbF9mZWVzIjogcm91
+bmQodG90YWxfZmVlcywgMiksCiAgICAgICAgICAgICAgICAiZnhfZmVlIjog
+cm91bmQoZnhfZmVlLCAyKSwKICAgICAgICAgICAgICAgICJuZXRfcG5sX2xv
+Y2FsIjogY2d0X2luZm9bIm5ldF9wbmxfbG9jYWwiXSwKICAgICAgICAgICAg
+ICAgICJ0YXhhYmxlX2xvY2FsIjogY2d0X2luZm9bInRheGFibGVfbG9jYWwi
+XSwKICAgICAgICAgICAgICAgICJjZ3RfbG9jYWwiOiBjZ3RfaW5mb1siY2d0
+X2xvY2FsIl0sCiAgICAgICAgICAgICAgICAibG9jYWxfY3VycmVuY3kiOiBj
+d3RfaW5mb1sibG9jYWxfY3VycmVuY3kiXSwKICAgICAgICAgICAgICAgICJj
+g3RfdXNkIjogY2d0X2luZm9bImNndF91c2QiXSwKICAgICAgICAgICAgICAg
+ICJpbmNsdXNpb25fbG9jYWwiOiBjZ3RfaW5mby5nZXQoImluY2x1c2lvbl9s
+b2NhbCIpLAogICAgICAgICAgICAgICAgImluY2x1c2lvbl9yYXRlIjogY2d0
+X2luZm8uZ2V0KCJpbmNsdXNpb25fcmF0ZSIpLAogICAgICAgICAgICAgICAg
+Im1hcmdpbmFsX3JhdGUiOiBjZ3RfaW5mby5nZXQoIm1hcmdpbmFsX3JhdGUi
+KSwKICAgICAgICAgICAgICAgICJuZXRfY2FzaF91c2QiOiByb3VuZChuZXRf
+Y2FzaF91c2QsIDIpLAogICAgICAgICAgICAgICAgIm5ldF9jYXNoX2xvY2Fs
+Ijogcm91bmQobmV0X2Nhc2hfbG9jYWwsIDIpLAogICAgICAgICAgICB9LAog
+ICAgICAgIH0KCgpkZWYgZGF0ZXRpbWVfbm93KCkgLT4gc3RyOgogICAgZnJv
+bSBkYXRldGltZSBpbXBvcnQgZGF0ZXRpbWUKICAgIHJldHVybiBkYXRldGlt
+ZS5ub3coKS5zdHJmdGltZSgiJWQgJWIgJVkgICVIOiVNOlVTIikK
